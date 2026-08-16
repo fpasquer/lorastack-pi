@@ -18,7 +18,8 @@ The Raspberry Pi acts as the permanent IoT server and runs the following service
 
 * ChirpStack
 * Mosquitto MQTT
-* ChirpStack's required database
+* PostgreSQL (ChirpStack database)
+* Redis (required by ChirpStack)
 
 The application layer runs separately on a development laptop:
 
@@ -161,6 +162,8 @@ The LPS8N is responsible for receiving LoRaWAN radio traffic and forwarding it t
 
 It does not contain application logic.
 
+> **TODO:** The exact gateway-to-ChirpStack protocol (UDP packet forwarder vs. ChirpStack MQTT Forwarder) will be decided once the LPS8N is received and configured.
+
 ### ChirpStack
 
 ChirpStack is responsible for:
@@ -211,11 +214,17 @@ LoRaWAN network server.
 
 MQTT broker.
 
-### ChirpStack Database
+### PostgreSQL
 
-The database required by the currently supported ChirpStack version.
+PostgreSQL is the database required by the currently supported ChirpStack version (v4).
 
-The exact database technology and version must follow the **current official ChirpStack documentation**.
+The exact version must follow the **current official ChirpStack documentation**.
+
+### Redis
+
+Redis is required by ChirpStack for caching and queuing.
+
+It is included **strictly as a ChirpStack dependency**, not as a general-purpose service.
 
 ---
 
@@ -523,7 +532,6 @@ Avoid premature complexity.
 
 Do not add:
 
-* Redis;
 * Kafka;
 * Kubernetes;
 * additional databases;
@@ -544,7 +552,8 @@ The current phase is limited to:
 * Docker Compose
 * ChirpStack
 * Mosquitto
-* ChirpStack database
+* PostgreSQL (ChirpStack database)
+* Redis (ChirpStack dependency)
 
 ### Hardware
 
