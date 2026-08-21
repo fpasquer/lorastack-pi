@@ -10,7 +10,7 @@ The project is designed to operate **locally**, without The Things Network (TTN)
 
 ---
 
-## 1. Project Overview
+# 1. Project Overview
 
 The objective is to build a reliable and extensible local IoT platform capable of:
 
@@ -18,11 +18,12 @@ The objective is to build a reliable and extensible local IoT platform capable o
 * processing LoRaWAN traffic through ChirpStack;
 * exposing sensor data through MQTT;
 * allowing application services to consume that data;
-* eventually controlling physical actuators such as pumps and electrovalves.
+* eventually controlling physical actuators such as pumps and electrovalves;
+* maintaining recoverable persistent infrastructure through automated backups.
 
 The first phase deliberately focuses on the infrastructure required to establish a reliable data pipeline.
 
-### Phase 1
+## Phase 1
 
 ```text
 LoRaWAN sensor
@@ -68,10 +69,14 @@ The project follows these principles:
 * **ARM64 compatibility**
 * **Minimal exposed network ports**
 * **Clear separation between infrastructure and application logic**
+* **Automated and validated backups**
+* **Documented recovery procedures**
 * **Prefer official documentation and supported configurations**
 * **Avoid unnecessary infrastructure complexity**
 
 The system should remain usable even when Internet connectivity is unavailable, provided the local network and infrastructure remain operational.
+
+Persistent IoT infrastructure must also remain recoverable after container failures, host failures and accidental data loss.
 
 ---
 
@@ -85,6 +90,7 @@ Current operating system:
 
 ```text
 Debian GNU/Linux 13 (Trixie)
+
 Architecture: ARM64 / aarch64
 RAM: 2 GB
 ```
@@ -92,6 +98,8 @@ RAM: 2 GB
 The Raspberry Pi is intended to operate continuously.
 
 The limited 2 GB RAM footprint is an explicit design constraint. Additional services should therefore not be introduced without a demonstrated need.
+
+The Raspberry Pi hosts the core IoT infrastructure and is backed up to separate physical storage.
 
 ## LoRaWAN Gateway
 
@@ -141,7 +149,7 @@ Additional sensors and actuators will be added progressively.
 ┌─────────────────────────────────────────────────────────┐
 │                    RASPBERRY PI                         │
 │                                                         │
-│                      Docker                             │
+│                       Docker                            │
 │                                                         │
 │  ┌───────────────────────────────┐                      │
 │  │ ChirpStack Gateway Bridge     │                      │
@@ -165,9 +173,9 @@ Additional sensors and actuators will be added progressively.
 │                  │                                      │
 │          ┌───────┴────────┐                             │
 │          ▼                ▼                             │
-│   ┌─────────────┐   ┌─────────────┐                     │
-│   │ PostgreSQL  │   │    Redis    │                     │
-│   └─────────────┘   └─────────────┘                     │
+│   ┌─────────────┐  ┌─────────────┐                      │
+│   │ PostgreSQL  │  │    Redis    │                      │
+│   └─────────────┘  └─────────────┘                      │
 │                                                         │
 └──────────────────────┬──────────────────────────────────┘
                        │
@@ -248,16 +256,16 @@ Conceptually:
 
 ```text
 LPS8N
-  │
-  │ Semtech UDP :1700
-  ▼
+ │
+ │ Semtech UDP :1700
+ ▼
 Gateway Bridge
-  │
-  │ MQTT
-  ▼
+ │
+ │ MQTT
+ ▼
 Mosquitto
-  │
-  ▼
+ │
+ ▼
 ChirpStack
 ```
 
@@ -271,18 +279,23 @@ For a Semtech UDP gateway, the gateway's packet-forwarder configuration points t
 
 # 7. Raspberry Pi Services
 
-The Raspberry Pi currently runs the following Docker services (all defined in `docker-compose.yml`).
+The Raspberry Pi currently runs the following Docker services, all defined in `docker-compose.yml`.
 
-| Service                     | Image                                    | Purpose                               |
-| --------------------------- | ---------------------------------------- | ------------------------------------- |
-| `chirpstack`                | `chirpstack/chirpstack:4`                | LoRaWAN Network Server (v4, EU868)    |
-| `chirpstack-gateway-bridge` | `chirpstack/chirpstack-gateway-bridge:4` | Semtech UDP → MQTT gateway bridge     |
-| `mosquitto`                 | `eclipse-mosquitto:2`                    | MQTT broker                           |
-| `postgres`                  | `postgres:16-alpine`                     | ChirpStack persistent database        |
-| `redis`                     | `redis:7-alpine`                         | ChirpStack cache / queues / metrics   |
+| Service                     | Image                                    | Purpose                             |
+| --------------------------- | ---------------------------------------- | ----------------------------------- |
+| `chirpstack`                | `chirpstack/chirpstack:4`                | LoRaWAN Network Server (v4, EU868)  |
+| `chirpstack-gateway-bridge` | `chirpstack/chirpstack-gateway-bridge:4` | Semtech UDP → MQTT gateway bridge   |
+| `mosquitto`                 | `eclipse-mosquitto:2`                    | MQTT broker                         |
+| `postgres`                  | `postgres:16-alpine`                     | ChirpStack persistent database      |
+| `redis`                     | `redis:7-alpine`                         | ChirpStack cache / queues / metrics |
 
-All services use `restart: unless-stopped` and per-service Docker log rotation
-(json-file, `max-size: 10m`, `max-file: 3`).
+All services use `restart: unless-stopped` and per-service Docker log rotation:
+
+```text
+json-file
+max-size: 10m
+max-file: 3
+```
 
 These services form the infrastructure layer.
 
@@ -377,7 +390,7 @@ Do not introduce another message broker without a demonstrated requirement.
 
 PostgreSQL is the persistent database used by ChirpStack.
 
-Verified configuration (from `docker-compose.yml` and `configuration/postgresql/`):
+Verified configuration:
 
 * image: `postgres:16-alpine`;
 * database: `chirpstack`;
@@ -389,21 +402,33 @@ Verified configuration (from `docker-compose.yml` and `configuration/postgresql/
 
 The database is internal infrastructure and must not be exposed to the LAN.
 
+PostgreSQL data is included in the infrastructure backup strategy.
+
 ---
 
 # 12. Redis
 
-Redis is deployed as a ChirpStack supporting service (cache, queues, metrics).
+Redis is deployed as a ChirpStack supporting service for cache, queues and metrics.
 
-Verified configuration (from `docker-compose.yml`):
+Verified configuration:
 
 * image: `redis:7-alpine`;
-* command: `redis-server --save 300 1 --save 60 100 --appendonly no` (RDB snapshots only, no AOF);
+* command:
+
+```text
+redis-server --save 300 1 --save 60 100 --appendonly no
+```
+
+* RDB snapshots only;
+* no AOF;
 * persistent volume: `redisdata` mounted at `/data`;
 * network: attached only to the internal Docker network — no port is published to the LAN.
 
 It is not a general-purpose application database or message broker.
+
 No application should use Redis for unrelated purposes unless the architecture is explicitly changed.
+
+Redis data is retained as part of the infrastructure persistence strategy, although Redis is not considered equivalent in criticality to PostgreSQL.
 
 ---
 
@@ -451,6 +476,8 @@ MySQL
 ```
 
 ChirpStack infrastructure data and application data therefore remain independent.
+
+The Raspberry Pi infrastructure backup currently covers the Raspberry Pi-hosted infrastructure. Application-level MySQL backups remain the responsibility of the separate development/application environment until that architecture changes.
 
 ---
 
@@ -533,34 +560,35 @@ Operational procedures are documented in:
 docs/OPERATIONS.md
 ```
 
+Backup implementation and operational procedures should also be kept synchronized with the actual systemd service/timer configuration.
+
 ---
 
 # 17. Persistence
 
 Important data must never depend exclusively on a container's writable filesystem.
 
-### Persistent data (named Docker volumes)
+## Persistent data — named Docker volumes
 
-| Volume           | Content                                                        |
-| ---------------- | -------------------------------------------------------------- |
-| `postgresqldata` | ChirpStack database — the critical state                       |
-| `redisdata`      | Redis RDB snapshots (cache; safe to lose, kept for warm restarts) |
-| `mosquittodata`  | MQTT retained messages and subscriptions (`persistence true`)  |
-| `mosquittolog`   | `mosquitto.log`                                                |
+| Volume           | Content                                                       |
+| ---------------- | ------------------------------------------------------------- |
+| `postgresqldata` | ChirpStack database — critical persistent state               |
+| `redisdata`      | Redis RDB snapshots — supporting state                        |
+| `mosquittodata`  | MQTT retained messages and subscriptions (`persistence true`) |
+| `mosquitolog`    | `mosquitto.log`                                               |
 
-### Configuration (bind mounts, read-only inside containers)
+## Configuration — bind mounts
 
-| Path                                                                     | Mounted into                |
-| ------------------------------------------------------------------------ | --------------------------- |
-| `configuration/chirpstack/`                                              | chirpstack                  |
-| `configuration/chirpstack-gateway-bridge/chirpstack-gateway-bridge.toml` | chirpstack-gateway-bridge   |
-| `configuration/mosquitto/config/`                                        | mosquitto                   |
-| `configuration/postgresql/initdb/`                                       | postgres (first init only)  |
+| Path                                                                     | Mounted into               |
+| ------------------------------------------------------------------------ | -------------------------- |
+| `configuration/chirpstack/`                                              | chirpstack                 |
+| `configuration/chirpstack-gateway-bridge/chirpstack-gateway-bridge.toml` | chirpstack-gateway-bridge  |
+| `configuration/mosquitto/config/`                                        | mosquitto                  |
+| `configuration/postgresql/initdb/`                                       | postgres (first init only) |
 
-### Ephemeral container data
+## Ephemeral container data
 
-Container writable layers and ChirpStack's internal state (it stores everything
-durable in PostgreSQL and Redis) are not relied upon for persistence.
+Container writable layers and ephemeral container state are not relied upon for persistence.
 
 The infrastructure must survive:
 
@@ -572,8 +600,9 @@ Docker restart
 Raspberry Pi reboot
 ```
 
-Verified with a full `docker compose down && docker compose up -d` cycle
-(see `docs/OPERATIONS.md`).
+Verified with a full `docker compose down && docker compose up -d` cycle.
+
+Persistent infrastructure data is additionally protected by the automated backup system described in section 24.
 
 ---
 
@@ -581,33 +610,32 @@ Verified with a full `docker compose down && docker compose up -d` cycle
 
 The infrastructure is primarily local.
 
-### Published ports (complete list, from `docker-compose.yml`)
+## Published ports
 
-| Port        | Service                     | Purpose                                                  |
-| ----------- | --------------------------- | -------------------------------------------------------- |
-| `1883/tcp`  | mosquitto                   | MQTT for the laptop (Symfony); anonymous access rejected |
-| `8080/tcp`  | chirpstack                  | Web UI + gRPC API administration from the LAN            |
-| `1700/udp`  | chirpstack-gateway-bridge   | Semtech UDP packet-forwarder endpoint for the LPS8N      |
+| Port       | Service                   | Purpose                                                  |
+| ---------- | ------------------------- | -------------------------------------------------------- |
+| `1883/tcp` | mosquitto                 | MQTT for the laptop (Symfony); anonymous access rejected |
+| `8080/tcp` | chirpstack                | Web UI + gRPC API administration from the LAN            |
+| `1700/udp` | chirpstack-gateway-bridge | Semtech UDP packet-forwarder endpoint for the LPS8N      |
 
-### Internal only (not published)
+## Internal only
 
-| Port        | Service    | Notes                                          |
-| ----------- | ---------- | ---------------------------------------------- |
-| `5432/tcp`  | postgres   | internal network only                          |
-| `6379/tcp`  | redis      | internal network only                          |
-| `8081/tcp`  | chirpstack | monitoring `/health`, used by the healthcheck  |
+| Port       | Service    | Notes                                         |
+| ---------- | ---------- | --------------------------------------------- |
+| `5432/tcp` | postgres   | internal network only                         |
+| `6379/tcp` | redis      | internal network only                         |
+| `8081/tcp` | chirpstack | monitoring `/health`, used by the healthcheck |
 
-### Docker networks
+## Docker networks
 
 Two bridge networks are defined:
 
 * `iot-internal` (`internal: true`) — all five services; no internet egress, no published ports. PostgreSQL and Redis exist only on this network.
 * `iot-lan` — mosquitto, chirpstack and chirpstack-gateway-bridge; carries the published ports.
 
-Docker cannot publish ports on an `internal` network, which is why the
-LAN-facing services are attached to both networks.
+Docker cannot publish ports on an `internal` network, which is why the LAN-facing services are attached to both networks.
 
-### Raspberry Pi LAN
+## Raspberry Pi LAN
 
 External communication over the LAN:
 
@@ -664,6 +692,8 @@ Principles:
 * keep configuration reproducible;
 * review exposed ports before adding services.
 
+Backup storage should also not be exposed as a network service unless explicitly required.
+
 ---
 
 # 20. Configuration Management
@@ -704,48 +734,53 @@ for required variables without including real credentials.
 
 Mosquitto is the central MQTT broker.
 
-### Broker
+## Broker
 
 * host (LAN): the Raspberry Pi IP, port `1883`;
 * host (Docker network): `mosquitto:1883`;
-* authentication: `allow_anonymous false`; users in `configuration/mosquitto/config/passwd`, per-topic permissions in `configuration/mosquitto/config/acl`;
+* authentication: `allow_anonymous false`;
+* users are defined in `configuration/mosquitto/config/passwd`;
+* per-topic permissions are defined in `configuration/mosquitto/config/acl`;
 * TLS is not currently configured (LAN-only trust; may be added later on a second listener).
 
-### Users and ACLs
+## Users and ACLs
 
 | User            | Permissions                                              |
 | --------------- | -------------------------------------------------------- |
 | `chirpstack`    | read/write `eu868/gateway/#`, read/write `application/#` |
 | `gatewaybridge` | read/write `eu868/gateway/#`                             |
-| `symfony`       | read-only `application/#` (reserved for the laptop)      |
+| `symfony`       | read-only `application/#`                                |
 
-### Topic structure (ChirpStack v4, region prefix `eu868`)
+## Topic structure
 
-Gateway topics (Gateway Bridge ↔ ChirpStack):
+Gateway topics:
 
 ```text
 eu868/gateway/<gateway_id>/event/<event>
-eu868/gateway/<gateway_id>/state/<state>     (retained)
+eu868/gateway/<gateway_id>/state/<state>
 eu868/gateway/<gateway_id>/command/<command>
 ```
 
-Application topics (ChirpStack ↔ Symfony):
+Application topics:
 
 ```text
 application/<application_id>/device/<dev_eui>/event/<event>
 application/<application_id>/device/<dev_eui>/command/<command>
 ```
 
-The Gateway Bridge publishes with the protobuf marshaler; the ChirpStack
-application integration uses JSON (`json = true` in `chirpstack.toml`).
+The Gateway Bridge publishes with the protobuf marshaler.
 
-The `eu868` prefix is defined by `topic_prefix` in
-`configuration/chirpstack/region_eu868.toml` and must match the Gateway
-Bridge topic templates.
+The ChirpStack application integration uses JSON (`json = true` in `chirpstack.toml`).
 
-The infrastructure uses MQTT in two directions.
+The `eu868` prefix is defined by `topic_prefix` in:
 
-### Gateway direction
+```text
+configuration/chirpstack/region_eu868.toml
+```
+
+and must match the Gateway Bridge topic templates.
+
+## Gateway direction
 
 ```text
 LPS8N
@@ -762,7 +797,7 @@ Mosquitto
 ChirpStack
 ```
 
-### Application direction
+## Application direction
 
 ```text
 ChirpStack
@@ -808,7 +843,7 @@ docker compose logs chirpstack-gateway-bridge
 docker compose logs mosquitto
 ```
 
-MQTT gateway traffic can be inspected with (authentication is required — anonymous connections are rejected):
+MQTT gateway traffic can be inspected with authentication:
 
 ```bash
 mosquitto_sub -h <pi-ip> -p 1883 \
@@ -850,13 +885,16 @@ This order should be preserved during troubleshooting.
 
 The infrastructure should be deployable using a small number of reproducible commands.
 
-First-time setup: create `.env` from the template and fill in random secrets
-(see `.env.example` for the complete variable list and generation instructions):
+First-time setup: create `.env` from the template and fill in random secrets.
 
 ```bash
 cp .env.example .env
-# edit .env, then generate the Mosquitto password file as documented in
-# docs/OPERATIONS.md ("Regenerating the Mosquitto password file")
+```
+
+Generate the Mosquitto password file as documented in:
+
+```text
+docs/OPERATIONS.md
 ```
 
 From the project directory:
@@ -895,39 +933,205 @@ The infrastructure should automatically restart after a Raspberry Pi reboot.
 
 # 24. Backup and Recovery
 
-The infrastructure must be recoverable.
+The Raspberry Pi infrastructure now has an **automated backup system**.
 
-Important persistent data must be identifiable and backed up.
+Backups are designed to protect the persistent IoT infrastructure against accidental deletion, container/data corruption and other recoverable failures.
+
+## 24.1 Backup destination
+
+Backups are stored on separate physical storage mounted at:
+
+```text
+/mnt/backup/
+```
+
+The IoT backup directory is:
+
+```text
+/mnt/backup/iot/
+```
+
+The directory itself must remain present. Backup files are created and managed inside this directory.
+
+The backup storage is intentionally separate from the Raspberry Pi's primary application storage.
+
+This separation reduces the risk that a failure of the main storage simultaneously destroys the live infrastructure and its backups.
+
+## 24.2 Backup scheduling
+
+Backups are scheduled using **systemd**, not cron.
+
+The backup system consists of:
+
+```text
+systemd timer
+      │
+      │ scheduled execution
+      ▼
+iot-backup.service
+      │
+      ▼
+backup script
+      │
+      ├── backup
+      ├── validation
+      ├── retention
+      └── duplicate protection
+```
+
+The service is not expected to remain continuously active.
+
+The systemd timer triggers the backup service according to the configured schedule.
+
+After the backup finishes, the service exits normally.
+
+## 24.3 Backup validation
+
+Creating a backup file is not considered sufficient.
+
+Each backup is validated after creation.
+
+The objective is to detect backup failures immediately rather than discovering an unusable backup during a future recovery operation.
+
+A successful backup therefore requires both:
+
+1. successful backup creation;
+2. successful validation.
+
+## 24.4 Retention policy
+
+The current retention policy is:
+
+```text
+Daily backups:
+    30 days
+
+Monthly backups:
+    12 months
+```
+
+This provides:
+
+* recent daily recovery points;
+* longer-term monthly recovery points;
+* controlled disk usage.
+
+Retention is handled automatically by the backup process.
+
+## 24.5 Duplicate protection
+
+The backup process protects against multiple backups being created for the same calendar day.
+
+This is important because manually starting the service or accidentally triggering it more than once must not create unnecessary duplicate daily recovery points.
+
+The intended result is:
+
+```text
+2026-08-21
+    └── one daily backup
+
+2026-08-22
+    └── one daily backup
+
+2026-08-23
+    └── one daily backup
+```
+
+rather than multiple daily copies.
+
+## 24.6 Backup verification
+
+Useful commands:
+
+```bash
+sudo ls -lah /mnt/backup/iot/
+```
+
+Check the systemd timer:
+
+```bash
+systemctl list-timers --all | grep iot-backup
+```
+
+Check the backup service:
+
+```bash
+systemctl status iot-backup.service --no-pager
+```
+
+Check recent backup logs:
+
+```bash
+sudo journalctl -u iot-backup.service --since "today" --no-pager
+```
+
+For a complete historical view:
+
+```bash
+sudo journalctl -u iot-backup.service --no-pager
+```
+
+The expected state after a successful scheduled execution is that the service has completed successfully and returned to an inactive state while the timer remains scheduled for the next execution.
+
+## 24.7 Recovery
 
 The recovery process should conceptually be:
 
 ```text
 Stop stack
     ↓
-Backup persistent data
+Identify required backup
     ↓
-Recreate Docker environment
+Validate backup
     ↓
 Restore persistent data
     ↓
+Recreate Docker environment if required
+    ↓
 Start stack
+    ↓
+Validate PostgreSQL
+    ↓
+Validate Redis
+    ↓
+Validate Mosquitto
     ↓
 Validate ChirpStack
     ↓
-Validate MQTT
+Validate Gateway Bridge
     ↓
-Validate gateway
+Validate LPS8N connectivity
     ↓
 Validate sensor data
 ```
 
-The detailed operational backup procedure is maintained in:
+The detailed operational recovery procedure is maintained in:
 
 ```text
 docs/OPERATIONS.md
 ```
 
-Backups should eventually be stored on separate physical storage rather than only on the Raspberry Pi.
+Recovery should be tested periodically rather than assuming that successful backup creation alone guarantees successful recovery.
+
+## 24.8 Backup philosophy
+
+The backup system follows the principle:
+
+```text
+Persistent data
+      ↓
+Automated backup
+      ↓
+Validation
+      ↓
+Separate physical storage
+      ↓
+Controlled retention
+      ↓
+Recoverable IoT infrastructure
+```
+
+Backups are considered part of the infrastructure rather than an optional operational task.
 
 ---
 
@@ -937,9 +1141,11 @@ This is a long-term IoT project.
 
 The goal of the first phase is **reliability before complexity**.
 
-The first milestone is simply:
+The first milestone is:
 
 > Receive real sensor data from the SE01-LB through the LPS8N, process it with ChirpStack, publish it through MQTT, and make it available to Symfony over the local network.
+
+The infrastructure should also be recoverable through automated backups before significant additional complexity is introduced.
 
 Everything else should be introduced progressively.
 
@@ -960,7 +1166,7 @@ The Raspberry Pi has only 2 GB RAM, so resource efficiency is an explicit archit
 
 # 26. Phase 1 Scope
 
-### Raspberry Pi
+## Raspberry Pi
 
 * Debian GNU/Linux 13 ARM64
 * Docker
@@ -970,18 +1176,28 @@ The Raspberry Pi has only 2 GB RAM, so resource efficiency is an explicit archit
 * Mosquitto
 * PostgreSQL
 * Redis
+* systemd-based automated backup
 
-### LoRaWAN hardware
+## LoRaWAN hardware
 
 * Dragino LPS8N
 * Dragino SE01-LB
 
-### Application environment
+## Backup infrastructure
+
+* Separate physical backup storage
+* Automated daily backups
+* Backup validation
+* One-backup-per-day protection
+* 30-day daily retention
+* 12-month monthly retention
+
+## Application environment
 
 * Symfony
 * MySQL
 
-### Phase 1 milestone
+## Phase 1 milestone
 
 ```text
 SE01-LB
@@ -1056,20 +1272,30 @@ When modifying this repository, Copilot must follow these rules:
 20. Keep the architecture simple and modular.
 21. Consider the Raspberry Pi's 2 GB RAM constraint before adding services.
 22. Do not introduce Kubernetes, Kafka, another MQTT broker, or another database without a demonstrated requirement.
+23. Do not disable, bypass or replace the automated backup mechanism without an explicit architectural decision.
+24. Preserve backup validation and retention policies when modifying backup scripts.
+25. Do not change the backup destination without updating this README and the operational documentation.
+26. Ensure backup-related changes remain compatible with the separate physical backup storage.
+27. Do not consider a backup successful solely because a backup file was created; validation must remain part of the process.
+28. Preserve protection against multiple backups for the same calendar day.
+29. Keep systemd timer/service configuration and backup documentation synchronized.
+30. Prefer simple, recoverable infrastructure over unnecessary complexity.
 
 ---
 
 # 29. Authoritative Architecture
 
-The single authoritative Phase 1 architecture diagram is the one in
-section 4.1 (Current Architecture). It is intentionally not duplicated here
-so that two copies cannot drift apart.
+The single authoritative Phase 1 architecture diagram is the one in section 4.1 (Current Architecture).
+
+It is intentionally not duplicated elsewhere so that two copies cannot drift apart.
 
 Any future architectural change should be deliberate, documented and justified.
 
+The backup architecture described in section 24 is also part of the current infrastructure design.
+
 ---
 
-## References
+# References
 
 * [ChirpStack Architecture](https://www.chirpstack.io/docs/architecture.html)
 * [ChirpStack Gateway Connection Guide](https://www.chirpstack.io/docs/guides/connect-gateway.html)
