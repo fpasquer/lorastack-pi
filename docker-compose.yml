@@ -1,0 +1,179 @@
+name: iot
+
+services:
+  # ---------------------------------------------------------------------------
+  # PostgreSQL — persistent storage for ChirpStack (requires v13+, pg_trgm).
+  # Internal only: no ports are published to the LAN.
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    networks:
+      - iot-internal
+    environment:
+      POSTGRES_USER: chirpstack
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
+      POSTGRES_DB: chirpstack
+    volumes:
+      - postgresqldata:/var/lib/postgresql/data
+      - ./configuration/postgresql/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chirpstack -d chirpstack"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  # ---------------------------------------------------------------------------
+  # Redis — ChirpStack dependency (cache, queues, metrics). Requires >= 6.2.
+  # Internal only: no ports are published to the LAN.
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --save 300 1 --save 60 100 --appendonly no
+    networks:
+      - iot-internal
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  # ---------------------------------------------------------------------------
+  # Mosquitto — central MQTT broker.
+  # Port 1883 is published to the LAN so the laptop (Symfony) can subscribe.
+  # Anonymous connections are rejected; see configuration/mosquitto/config.
+  # ---------------------------------------------------------------------------
+  mosquitto:
+    image: eclipse-mosquitto:2
+    restart: unless-stopped
+    networks:
+      - iot-internal
+      - iot-lan
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./configuration/mosquitto/config:/mosquitto/config:ro
+      - mosquittodata:/mosquitto/data
+      - mosquittolog:/mosquitto/log
+    healthcheck:
+      # A rejected anonymous connection would still prove the listener is up,
+      # but we authenticate properly to also validate the password file and ACLs.
+      test: >
+        mosquitto_sub -h 127.0.0.1 -p 1883
+        -u "${MQTT_CHIRPSTACK_USERNAME}" -P "${MQTT_CHIRPSTACK_PASSWORD}"
+        -t '$$SYS/broker/uptime' -C 1 -i healthcheck -W 5
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  # ---------------------------------------------------------------------------
+  # ChirpStack — LoRaWAN network server (v4).
+  # Port 8080 is published to the LAN for the web UI / gRPC API.
+  # Port 8081 (monitoring /health) stays internal, used by the healthcheck.
+  # ---------------------------------------------------------------------------
+  chirpstack:
+    image: chirpstack/chirpstack:4
+    restart: unless-stopped
+    command: -c /etc/chirpstack
+    networks:
+      - iot-internal
+      - iot-lan
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./configuration/chirpstack:/etc/chirpstack:ro
+    environment:
+      MQTT_BROKER_HOST: mosquitto
+      REDIS_HOST: redis
+      POSTGRESQL_HOST: postgres
+      POSTGRESQL_PASSWORD: ${POSTGRES_PASSWORD:?}
+      MQTT_USERNAME: ${MQTT_CHIRPSTACK_USERNAME:?}
+      MQTT_PASSWORD: ${MQTT_CHIRPSTACK_PASSWORD:?}
+      CHIRPSTACK_API_SECRET: ${CHIRPSTACK_API_SECRET:?}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mosquitto:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8081/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  # ---------------------------------------------------------------------------
+  # ChirpStack Gateway Bridge — Semtech UDP packet-forwarder backend.
+  # Required because ChirpStack v4 speaks to gateways over MQTT only; this
+  # component terminates the Semtech UDP protocol used by the Dragino LPS8N.
+  # UDP 1700 is published for the LPS8N gateway. Restricting this port to the
+  # gateway IP requires a firewall rule (DOCKER-USER chain) — see docs.
+  # ---------------------------------------------------------------------------
+  chirpstack-gateway-bridge:
+    image: chirpstack/chirpstack-gateway-bridge:4
+    restart: unless-stopped
+    networks:
+      - iot-internal
+      - iot-lan
+    ports:
+      - "1700:1700/udp"
+    volumes:
+      - ./configuration/chirpstack-gateway-bridge/chirpstack-gateway-bridge.toml:/etc/chirpstack-gateway-bridge/chirpstack-gateway-bridge.toml:ro
+    environment:
+      INTEGRATION__MQTT__AUTH__GENERIC__USERNAME: ${MQTT_GWBRIDGE_USERNAME:?}
+      INTEGRATION__MQTT__AUTH__GENERIC__PASSWORD: ${MQTT_GWBRIDGE_PASSWORD:?}
+    depends_on:
+      mosquitto:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+networks:
+  # Backend network: no outbound internet access and no published ports.
+  # PostgreSQL and Redis exist ONLY on this network.
+  iot-internal:
+    driver: bridge
+    internal: true
+
+  # LAN-facing network: carries the published ports (1883, 8080, 1700/udp).
+  # Docker does not publish ports on internal networks, hence the split.
+  iot-lan:
+    driver: bridge
+    internal: false
+
+volumes:
+  postgresqldata:
+  redisdata:
+  mosquittodata:
+  mosquittolog:

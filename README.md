@@ -162,7 +162,12 @@ The LPS8N is responsible for receiving LoRaWAN radio traffic and forwarding it t
 
 It does not contain application logic.
 
-> **TODO:** The exact gateway-to-ChirpStack protocol (UDP packet forwarder vs. ChirpStack MQTT Forwarder) will be decided once the LPS8N is received and configured.
+The gateway uses the **Semtech UDP packet forwarder** protocol. Because
+ChirpStack v4 communicates with gateways over MQTT only, a
+`chirpstack-gateway-bridge` container on the Raspberry Pi terminates UDP
+port 1700 and bridges it to MQTT (topic prefix `eu868`). This follows the
+current official ChirpStack Docker architecture; nothing is installed on
+the LPS8N itself.
 
 ### ChirpStack
 
@@ -302,6 +307,31 @@ The project should use a clean structure similar to:
 ```
 
 The structure may be adapted when required by the current official Docker deployment recommendations.
+
+The implemented structure follows the official chirpstack-docker layout:
+
+```text
+/opt/iot/
+│
+├── docker-compose.yml
+├── .env                  # secrets, git-ignored
+├── .env.example
+├── README.md
+├── docs/
+│   └── OPERATIONS.md     # ports, volumes, networks, runbook
+│
+└── configuration/
+    ├── chirpstack/             # chirpstack.toml, region_eu868.toml
+    ├── chirpstack-gateway-bridge/
+    ├── mosquitto/config/       # mosquitto.conf, acl, passwd (git-ignored)
+    └── postgresql/initdb/      # pg_trgm extension
+```
+
+**Operations runbook (startup, shutdown, logs, health checks, backup,
+troubleshooting): see [docs/OPERATIONS.md](docs/OPERATIONS.md).**
+
+**Implementation plan and resume point (phases 6–9 remaining): see
+[PLAN.md](PLAN.md).**
 
 Do not introduce unnecessary directories or services.
 

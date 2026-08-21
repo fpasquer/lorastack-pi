@@ -1,0 +1,26 @@
+# Mosquitto ACL file — per-user topic permissions.
+# Format: https://mosquitto.org/man/mosquitto-conf-5.html (acl_file)
+#
+# Topic plan (ChirpStack v4 conventions):
+#   eu868/gateway/<gateway_id>/event/...   gateway -> ChirpStack (via bridge)
+#   eu868/gateway/<gateway_id>/state/...   gateway state (retained)
+#   eu868/gateway/<gateway_id>/command/... ChirpStack -> gateway
+#   application/<app_id>/device/<dev_eui>/event/...    ChirpStack -> apps
+#   application/<app_id>/device/<dev_eui>/command/...  apps -> ChirpStack
+
+# ChirpStack: full access to gateway topics (read events/states, write
+# commands) and application topics (write events, read commands).
+user chirpstack
+topic readwrite eu868/gateway/#
+topic readwrite application/#
+# Required by the Docker healthcheck.
+topic read $SYS/broker/uptime
+
+# ChirpStack Gateway Bridge: only the gateway topics for the eu868 region.
+user gatewaybridge
+topic readwrite eu868/gateway/#
+
+# Symfony application (laptop, Phase 8/9): subscribe-only to application
+# events. It must not be able to publish or to read gateway topics.
+user symfony
+topic read application/#

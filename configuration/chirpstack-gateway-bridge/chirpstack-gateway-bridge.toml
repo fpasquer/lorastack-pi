@@ -1,0 +1,57 @@
+# ChirpStack Gateway Bridge configuration.
+# Reference: https://www.chirpstack.io/docs/chirpstack-gateway-bridge/configuration.html
+#
+# Terminates the Semtech UDP packet-forwarder protocol (used by the Dragino
+# LPS8N) and bridges it to MQTT using the eu868 topic prefix expected by the
+# ChirpStack eu868 region configuration.
+#
+# MQTT credentials are NOT stored here; they are injected through the
+# INTEGRATION__MQTT__AUTH__GENERIC__USERNAME / __PASSWORD environment
+# variables (see docker-compose.yml and .env).
+
+[general]
+  log_level = 4
+  log_json = false
+
+# No frame filtering: forward all LoRaWAN frames.
+[filters]
+  net_ids = []
+  join_euis = []
+
+# Gateway backend: Semtech UDP packet-forwarder.
+[backend]
+  type = "semtech_udp"
+
+  [backend.semtech_udp]
+    # Listener to which the LPS8N forwards its data. The gateway's
+    # serv_port_up / serv_port_down must match this port (1700).
+    udp_bind = "0.0.0.0:1700"
+    fake_rx_time = false
+
+[integration]
+  # Protobuf is the encoding expected by ChirpStack v4.
+  marshaler = "protobuf"
+
+  [integration.mqtt]
+    # eu868 topic prefix, matching topic_prefix in region_eu868.toml.
+    event_topic_template = "eu868/gateway/{{ .GatewayID }}/event/{{ .EventType }}"
+    state_topic_template = "eu868/gateway/{{ .GatewayID }}/state/{{ .StateType }}"
+    command_topic_template = "eu868/gateway/{{ .GatewayID }}/command/#"
+    state_retained = true
+    keep_alive = "30s"
+    max_reconnect_interval = "1m0s"
+    terminate_on_connect_error = false
+
+    [integration.mqtt.auth]
+      type = "generic"
+
+      [integration.mqtt.auth.generic]
+        servers = [
+          "tcp://mosquitto:1883",
+        ]
+        qos = 0
+        clean_session = true
+        client_id = ""
+        ca_cert = ""
+        tls_cert = ""
+        tls_key = ""

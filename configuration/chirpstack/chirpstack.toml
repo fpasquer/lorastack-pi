@@ -1,0 +1,61 @@
+# ChirpStack v4 main configuration.
+# Reference: https://www.chirpstack.io/docs/chirpstack/configuration.html
+# $VARIABLE values are substituted from the container environment (see
+# docker-compose.yml, sourced from .env).
+
+[logging]
+  level = "info"
+
+# PostgreSQL configuration (persistent storage, requires v13+ and pg_trgm).
+[postgresql]
+  dsn = "postgres://chirpstack:$POSTGRESQL_PASSWORD@$POSTGRESQL_HOST/chirpstack?sslmode=disable"
+  max_open_connections = 10
+  min_idle_connections = 0
+
+# Redis configuration (cache, queues, metrics; requires >= 6.2).
+[redis]
+  servers = [
+    "redis://$REDIS_HOST/",
+  ]
+  cluster = false
+
+# Network related configuration.
+[network]
+  # Private local network NetID.
+  net_id = "000000"
+
+  # Only EU868 is enabled: the LPS8N is an 868 MHz gateway and the
+  # SE01-LB runs EU868 firmware.
+  enabled_regions = [
+    "eu868",
+  ]
+
+# API interface (web UI + gRPC API). Published on LAN port 8080.
+[api]
+  bind = "0.0.0.0:8080"
+  secret = "$CHIRPSTACK_API_SECRET"
+
+# Monitoring endpoint (internal only, used by the Docker healthcheck).
+# NOT published to the LAN.
+[monitoring]
+  bind = "0.0.0.0:8081"
+
+# Gateway security: only gateways registered in ChirpStack are accepted.
+[gateway]
+  allow_unknown_gateways = false
+
+# Global integration configuration.
+[integration]
+  enabled = ["mqtt"]
+
+  [integration.mqtt]
+    # ChirpStack v4 application event/command topic scheme:
+    #   application/{{application_id}}/device/{{dev_eui}}/event/{{event}}
+    #   application/{{application_id}}/device/{{dev_eui}}/command/{{command}}
+    server = "tcp://$MQTT_BROKER_HOST:1883/"
+    json = true
+    username = "$MQTT_USERNAME"
+    password = "$MQTT_PASSWORD"
+    qos = 0
+    clean_session = false
+    share_name = "chirpstack"

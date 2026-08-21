@@ -1,0 +1,7 @@
+# Secrets — never commit
+.env
+configuration/mosquitto/config/passwd
+
+# Local data / OS noise
+*.log
+.DS_Store
