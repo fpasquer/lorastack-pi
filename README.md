@@ -1,53 +1,97 @@
 # IoT Infrastructure — Raspberry Pi
 
-Local and scalable IoT infrastructure based on **LoRaWAN, ChirpStack, MQTT and Docker**.
+Local, self-hosted IoT infrastructure based on **LoRaWAN, ChirpStack, MQTT and Docker**.
 
-This repository contains the infrastructure running on a dedicated Raspberry Pi.
+This repository contains the infrastructure layer of the IoT project running on a dedicated Raspberry Pi.
 
-The application/backend layer is intentionally **not hosted on the Raspberry Pi at this stage**.
+The application/backend layer is intentionally kept separate and currently runs on a development laptop.
+
+The project is designed to operate **locally**, without The Things Network (TTN) or an external IoT cloud platform.
 
 ---
 
 ## 1. Project Overview
 
-The goal of this project is to build a fully local IoT platform capable of collecting data from LoRaWAN sensors and exposing that data to an application layer.
+The objective is to build a reliable and extensible local IoT platform capable of:
 
-The first phase focuses exclusively on the **IoT infrastructure**.
+* receiving data from LoRaWAN sensors;
+* processing LoRaWAN traffic through ChirpStack;
+* exposing sensor data through MQTT;
+* allowing application services to consume that data;
+* eventually controlling physical actuators such as pumps and electrovalves.
 
-The Raspberry Pi acts as the permanent IoT server and runs the following services through Docker Compose:
+The first phase deliberately focuses on the infrastructure required to establish a reliable data pipeline.
 
-* ChirpStack
-* Mosquitto MQTT
-* PostgreSQL (ChirpStack database)
-* Redis (required by ChirpStack)
+### Phase 1
 
-The application layer runs separately on a development laptop:
+```text
+LoRaWAN sensor
+      │
+      ▼
+LPS8N gateway
+      │
+      │ Semtech UDP
+      ▼
+ChirpStack Gateway Bridge
+      │
+      │ MQTT
+      ▼
+Mosquitto
+      │
+      │ MQTT
+      ▼
+ChirpStack
+      │
+      │ MQTT application integration
+      ▼
+Symfony
+      │
+      ▼
+MySQL
+```
 
-* Symfony
-* MySQL
+The Raspberry Pi hosts the LoRaWAN infrastructure.
 
-The system must not depend on:
-
-* The Things Network (TTN)
-* external IoT cloud platforms
-* proprietary cloud services
-
-The system is designed to operate primarily on the local network.
+Symfony and MySQL are currently hosted separately on a development laptop.
 
 ---
 
-# 2. Current Hardware
+# 2. Design Principles
+
+The project follows these principles:
+
+* **Local-first**
+* **No mandatory cloud dependency**
+* **No TTN dependency**
+* **Docker-based infrastructure**
+* **Persistent storage**
+* **ARM64 compatibility**
+* **Minimal exposed network ports**
+* **Clear separation between infrastructure and application logic**
+* **Prefer official documentation and supported configurations**
+* **Avoid unnecessary infrastructure complexity**
+
+The system should remain usable even when Internet connectivity is unavailable, provided the local network and infrastructure remain operational.
+
+---
+
+# 3. Current Hardware
 
 ## Raspberry Pi
 
-Operating system:
+The Raspberry Pi is the permanent IoT infrastructure server.
+
+Current operating system:
 
 ```text
 Debian GNU/Linux 13 (Trixie)
 Architecture: ARM64 / aarch64
+RAM: 2 GB
 ```
 
-The Raspberry Pi is intended to operate continuously as the IoT infrastructure server.
+The Raspberry Pi is intended to operate continuously.
+
+The limited 2 GB RAM footprint is an explicit design constraint. Additional services should therefore not be introduced without a demonstrated need.
 
 ## LoRaWAN Gateway
 
@@ -55,7 +99,9 @@ The Raspberry Pi is intended to operate continuously as the IoT infrastructure s
 Dragino LPS8N
 ```
 
-The gateway communicates with ChirpStack over the local network.
+The LPS8N receives LoRaWAN radio traffic from sensors and forwards the traffic over the local network using the Semtech UDP packet-forwarder protocol.
+
+The gateway does not contain application logic.
 
 ## Current LoRaWAN Sensor
 
@@ -63,90 +109,113 @@ The gateway communicates with ChirpStack over the local network.
 Dragino SE01-LB
 ```
 
-The SE01-LB is the first sensor to be integrated into the platform.
+The SE01-LB is currently the first sensor connected to the platform.
 
 Additional sensors and actuators will be added progressively.
 
 ---
 
-# 3. Target Architecture
+# 4. Architecture
+
+## 4.1 Current Architecture
 
 ```text
-                         LOCAL NETWORK
-                              │
-                              │ MQTT
-                              │
-                    ┌─────────▼─────────┐
-                    │      LAPTOP       │
-                    │                   │
-                    │   Docker Compose  │
-                    │                   │
-                    │   ┌────────────┐  │
-                    │   │  Symfony   │  │
-                    │   └─────┬──────┘  │
-                    │         │         │
-                    │   ┌─────▼──────┐  │
-                    │   │   MySQL    │  │
-                    │   └────────────┘  │
-                    └─────────▲─────────┘
-                              │
-                              │ MQTT
-                              │
-                    ┌─────────┴──────────┐
-                    │   RASPBERRY PI     │
-                    │                    │
-                    │      Docker        │
-                    │                    │
-                    │  ┌──────────────┐  │
-                    │  │  ChirpStack  │  │
-                    │  └──────┬───────┘  │
-                    │         │          │
-                    │         ▼          │
-                    │  ┌──────────────┐  │
-                    │  │   Mosquitto  │  │
-                    │  └──────┬───────┘  │
-                    │         │          │
-                    │  ┌──────▼────────┐ │
-                    │  │ ChirpStack DB │ │
-                    │  └───────────────┘ │
-                    └─────────▲──────────┘
-                              │
-                           Ethernet
-                              │
-                    ┌─────────┴─────────┐
-                    │       LPS8N       │
-                    │      Gateway      │
-                    └─────────▲─────────┘
-                              │
-                           LoRaWAN
-                              │
-                         ┌────┴────┐
-                         │ SE01-LB │
-                         └─────────┘
+                         LoRaWAN
+                            │
+                            ▼
+                    ┌──────────────┐
+                    │    SE01-LB   │
+                    │    Sensor    │
+                    └──────┬───────┘
+                           │
+                           │ LoRaWAN radio
+                           ▼
+                    ┌──────────────┐
+                    │    LPS8N     │
+                    │   Gateway    │
+                    └──────┬───────┘
+                           │
+                           │ Semtech UDP
+                           │ UDP :1700
+                           ▼
+┌─────────────────────────────────────────────────────────┐
+│                    RASPBERRY PI                         │
+│                                                         │
+│                      Docker                             │
+│                                                         │
+│  ┌───────────────────────────────┐                      │
+│  │ ChirpStack Gateway Bridge     │                      │
+│  │                               │                      │
+│  │ Semtech UDP → MQTT            │                      │
+│  └───────────────┬───────────────┘                      │
+│                  │                                      │
+│                  │ MQTT                                 │
+│                  ▼                                      │
+│          ┌─────────────────┐                            │
+│          │   Mosquitto     │                            │
+│          │   MQTT Broker   │                            │
+│          └────────┬────────┘                            │
+│                   │                                     │
+│                   │ MQTT                                │
+│                   ▼                                     │
+│          ┌─────────────────┐                            │
+│          │   ChirpStack    │                            │
+│          │ LoRaWAN Server  │                            │
+│          └───────┬─────────┘                            │
+│                  │                                      │
+│          ┌───────┴────────┐                             │
+│          ▼                ▼                             │
+│   ┌─────────────┐   ┌─────────────┐                     │
+│   │ PostgreSQL  │   │    Redis    │                     │
+│   └─────────────┘   └─────────────┘                     │
+│                                                         │
+└──────────────────────┬──────────────────────────────────┘
+                       │
+                       │ MQTT / LAN
+                       ▼
+                ┌───────────────┐
+                │    LAPTOP     │
+                │               │
+                │   Symfony     │
+                │      │        │
+                │      ▼        │
+                │    MySQL      │
+                └───────────────┘
 ```
+
+This is the architecture that should be considered the **current source of truth** for Phase 1.
 
 ---
 
-# 4. Data Flow
+# 5. LoRaWAN Data Flow
 
-The expected data flow is:
+The complete path of an uplink is:
 
 ```text
 SE01-LB
    │
-   │ LoRaWAN
+   │ LoRaWAN radio
    ▼
 LPS8N
    │
-   │ IP / LAN
+   │ Semtech UDP
+   │ UDP port 1700
    ▼
-ChirpStack
+ChirpStack Gateway Bridge
    │
    │ MQTT
    ▼
 Mosquitto
    │
-   │ LAN
+   │ MQTT gateway topics
+   ▼
+ChirpStack
+   │
+   │ MQTT integration
+   ▼
+Mosquitto
+   │
+   │ MQTT application topics
    ▼
 Symfony
    │
@@ -154,94 +223,237 @@ Symfony
 MySQL
 ```
 
-### Responsibilities
+There are therefore **two distinct MQTT roles**:
 
-### LPS8N
+1. MQTT is used internally by the ChirpStack Gateway Bridge and ChirpStack.
+2. MQTT is also used as the application integration mechanism for Symfony.
 
-The LPS8N is responsible for receiving LoRaWAN radio traffic and forwarding it to ChirpStack.
+Mosquitto is the central MQTT broker for both roles.
 
-It does not contain application logic.
+---
 
-The gateway uses the **Semtech UDP packet forwarder** protocol. Because
-ChirpStack v4 communicates with gateways over MQTT only, a
-`chirpstack-gateway-bridge` container on the Raspberry Pi terminates UDP
-port 1700 and bridges it to MQTT (topic prefix `eu868`). This follows the
-current official ChirpStack Docker architecture; nothing is installed on
-the LPS8N itself.
+# 6. Gateway Communication
 
-### ChirpStack
+The LPS8N uses the **Semtech UDP packet-forwarder protocol**.
 
-ChirpStack is responsible for:
+The Raspberry Pi runs:
 
-* LoRaWAN network management;
+```text
+chirpstack-gateway-bridge
+```
+
+The Gateway Bridge receives the Semtech UDP traffic and converts it into MQTT messages.
+
+Conceptually:
+
+```text
+LPS8N
+  │
+  │ Semtech UDP :1700
+  ▼
+Gateway Bridge
+  │
+  │ MQTT
+  ▼
+Mosquitto
+  │
+  ▼
+ChirpStack
+```
+
+The Gateway Bridge is therefore an important component of the architecture and must not be omitted from diagrams or documentation.
+
+ChirpStack's official architecture documentation describes the Gateway Bridge as the component that converts Semtech UDP or Basics Station traffic into MQTT.
+
+For a Semtech UDP gateway, the gateway's packet-forwarder configuration points to the server running the Gateway Bridge, normally using UDP port `1700`.
+
+---
+
+# 7. Raspberry Pi Services
+
+The Raspberry Pi currently runs the following Docker services.
+
+| Service                     | Purpose                           |
+| --------------------------- | --------------------------------- |
+| `chirpstack`                | LoRaWAN Network Server            |
+| `chirpstack-gateway-bridge` | Semtech UDP → MQTT gateway bridge |
+| `mosquitto`                 | MQTT broker                       |
+| `postgres`                  | ChirpStack persistent database    |
+| `redis`                     | ChirpStack supporting service     |
+
+These services form the infrastructure layer.
+
+Application services such as Symfony and MySQL are intentionally outside this repository's Raspberry Pi stack.
+
+---
+
+# 8. ChirpStack
+
+ChirpStack is responsible for the LoRaWAN Network Server functionality.
+
+Its responsibilities include:
+
 * gateway management;
 * device management;
 * application management;
-* uplinks;
-* downlinks;
+* LoRaWAN network management;
+* uplink processing;
+* downlink processing;
 * LoRaWAN security;
-* device data processing;
-* MQTT integration.
+* device sessions and network state;
+* integration with MQTT and other application interfaces.
 
-### Mosquitto
+ChirpStack communicates with the gateway infrastructure through MQTT.
+
+The Gateway Bridge is responsible for converting the gateway's packet-forwarder protocol into MQTT.
+
+The official ChirpStack architecture documents MQTT as the communication layer between the gateway bridge and ChirpStack.
+
+---
+
+# 9. ChirpStack Gateway Bridge
+
+The Gateway Bridge is responsible for connecting the LPS8N's Semtech UDP packet-forwarder protocol to the MQTT broker.
+
+Its main responsibility is:
+
+```text
+Semtech UDP
+      │
+      ▼
+Gateway Bridge
+      │
+      ▼
+MQTT
+```
+
+It does not replace ChirpStack.
+
+It does not process LoRaWAN application data.
+
+It is a protocol bridge between the gateway and the MQTT infrastructure.
+
+The current deployment uses the `semtech_udp` backend.
+
+The default Semtech UDP port is:
+
+```text
+1700
+```
+
+The MQTT topic configuration must remain compatible with the ChirpStack region configuration, currently EU868.
+
+---
+
+# 10. Mosquitto
 
 Mosquitto is the local MQTT broker.
 
-It provides the messaging layer between the IoT infrastructure and application services.
+It provides the messaging infrastructure between:
 
-### Symfony
+```text
+Gateway Bridge
+       │
+       ▼
+   Mosquitto
+       │
+       ├── ChirpStack
+       │
+       └── Application services
+```
 
-Symfony is responsible for application/business logic.
+MQTT is intentionally retained as the main integration mechanism because it is lightweight, well suited to IoT systems and already supported natively by ChirpStack.
 
-It will consume MQTT data and persist relevant information into MySQL.
+The MQTT topic structure should remain compatible with the standard ChirpStack topic structure unless there is a strong technical reason to introduce an abstraction layer.
 
-Symfony is **not part of this Raspberry Pi repository**.
-
-### MySQL
-
-MySQL stores application-level data.
-
-It is **not part of this Raspberry Pi repository**.
-
----
-
-# 5. Raspberry Pi Services
-
-The Raspberry Pi must run only the infrastructure services required for the IoT platform.
-
-## Required services
-
-### ChirpStack
-
-LoRaWAN network server.
-
-### Mosquitto
-
-MQTT broker.
-
-### PostgreSQL
-
-PostgreSQL is the database required by the currently supported ChirpStack version (v4).
-
-The exact version must follow the **current official ChirpStack documentation**.
-
-### Redis
-
-Redis is required by ChirpStack for caching and queuing.
-
-It is included **strictly as a ChirpStack dependency**, not as a general-purpose service.
+Do not introduce another message broker without a demonstrated requirement.
 
 ---
 
-# 6. Docker Requirements
+# 11. PostgreSQL
 
-All Raspberry Pi services must run inside Docker containers.
+PostgreSQL is the persistent database used by ChirpStack.
 
-Use:
+The database is internal infrastructure and should not normally be exposed to the LAN.
 
-* Docker Engine
-* Docker Compose v5
-* ARM64-compatible images
+Persistent PostgreSQL data must survive:
+
+* container recreation;
+* Docker restart;
+* Raspberry Pi reboot.
+
+The required PostgreSQL extensions and initialization are maintained in:
+
+```text
+configuration/postgresql/
+```
+
+The exact database version should follow the requirements of the deployed ChirpStack version.
+
+---
+
+# 12. Redis
+
+Redis is deployed as a ChirpStack supporting service.
+
+It should not be considered a general-purpose application database or message broker.
+
+Its configuration must follow the requirements of the installed ChirpStack version.
+
+No application should use Redis for unrelated purposes unless the architecture is explicitly changed.
+
+---
+
+# 13. Symfony Application
+
+Symfony is the application/business-logic layer.
+
+It is currently **not hosted on the Raspberry Pi**.
+
+The application runs separately on a development laptop and consumes MQTT data from the Raspberry Pi.
+
+Responsibilities include:
+
+* consuming sensor data;
+* validating application-level data;
+* transforming data when required;
+* storing application data;
+* implementing business logic;
+* eventually controlling IoT actuators.
+
+Symfony should not be moved into this Raspberry Pi repository unless the architecture is deliberately changed.
+
+---
+
+# 14. MySQL
+
+MySQL stores application-level data for Symfony.
+
+It is currently hosted alongside the Symfony development environment.
+
+It is **not the ChirpStack database**.
+
+The separation is intentional:
+
+```text
+ChirpStack
+    │
+    ▼
+PostgreSQL
+
+Symfony
+    │
+    ▼
+MySQL
+```
+
+ChirpStack infrastructure data and application data therefore remain independent.
+
+---
+
+# 15. Docker
+
+All Raspberry Pi infrastructure services run inside Docker.
 
 Use:
 
@@ -255,91 +467,167 @@ Do not use the legacy:
 docker-compose
 ```
 
-The infrastructure must survive Raspberry Pi reboots.
+The deployment must use ARM64-compatible images.
 
-Containers should use appropriate restart policies.
+Containers should use appropriate restart policies so that the infrastructure automatically recovers after a Raspberry Pi reboot.
 
----
+Typical commands:
 
-# 7. Persistence
-
-No important application data should be stored exclusively inside ephemeral containers.
-
-Persistent data must use Docker volumes or explicitly mounted persistent directories.
-
-At minimum, persistence is required for:
-
-* ChirpStack database;
-* Mosquitto data;
-* Mosquitto configuration;
-* Mosquitto logs where appropriate;
-* ChirpStack configuration.
-
-The infrastructure must be recoverable after:
-
-* container recreation;
-* Docker restart;
-* Raspberry Pi reboot.
+```bash
+docker compose up -d
+docker compose down
+docker compose restart
+docker compose ps
+docker compose logs
+```
 
 ---
 
-# 8. Proposed Directory Structure
+# 16. Repository Structure
 
-The project should use a clean structure similar to:
+The repository currently follows this structure:
 
 ```text
 /opt/iot/
 │
 ├── docker-compose.yml
 ├── .env
-├── README.md
-│
-├── chirpstack/
-│   └── config/
-│
-├── mosquitto/
-│   ├── config/
-│   ├── data/
-│   └── log/
-│
-└── database/
-    └── ...
-```
-
-The structure may be adapted when required by the current official Docker deployment recommendations.
-
-The implemented structure follows the official chirpstack-docker layout:
-
-```text
-/opt/iot/
-│
-├── docker-compose.yml
-├── .env                  # secrets, git-ignored
 ├── .env.example
 ├── README.md
+│
 ├── docs/
-│   └── OPERATIONS.md     # ports, volumes, networks, runbook
+│   └── OPERATIONS.md
 │
 └── configuration/
-    ├── chirpstack/             # chirpstack.toml, region_eu868.toml
+    │
+    ├── chirpstack/
+    │   ├── chirpstack.toml
+    │   └── region_eu868.toml
+    │
     ├── chirpstack-gateway-bridge/
-    ├── mosquitto/config/       # mosquitto.conf, acl, passwd (git-ignored)
-    └── postgresql/initdb/      # pg_trgm extension
+    │
+    ├── mosquitto/
+    │   └── config/
+    │
+    └── postgresql/
+        └── initdb/
 ```
 
-**Operations runbook (startup, shutdown, logs, health checks, backup,
-troubleshooting): see [docs/OPERATIONS.md](docs/OPERATIONS.md).**
+Secrets such as `.env` and MQTT credentials must not be committed to Git.
 
-**Implementation plan and resume point (phases 6–9 remaining): see
-[PLAN.md](PLAN.md).**
+Operational procedures are documented in:
 
-Do not introduce unnecessary directories or services.
+```text
+docs/OPERATIONS.md
+```
 
 ---
 
-# 9. Configuration Principles
+# 17. Persistence
 
-Configuration must be:
+Important data must never depend exclusively on a container's writable filesystem.
+
+Persistent storage is required for:
+
+* PostgreSQL data;
+* Mosquitto data;
+* Mosquitto configuration;
+* Mosquitto logs where applicable;
+* ChirpStack configuration.
+
+The infrastructure must survive:
+
+```text
+Container recreation
+        ↓
+Docker restart
+        ↓
+Raspberry Pi reboot
+```
+
+Persistent Docker volumes or explicitly mounted persistent directories must therefore be used.
+
+---
+
+# 18. Networking
+
+The infrastructure is primarily local.
+
+There are two distinct networking layers.
+
+### Docker network
+
+Used for internal communication between containers:
+
+```text
+ChirpStack
+Gateway Bridge
+Mosquitto
+PostgreSQL
+Redis
+```
+
+### Raspberry Pi LAN
+
+Used for external communication such as:
+
+```text
+LPS8N
+   │
+   ▼
+Gateway Bridge UDP :1700
+```
+
+and:
+
+```text
+Laptop
+   │
+   │ MQTT
+   ▼
+Mosquitto
+```
+
+and, when required:
+
+```text
+Laptop / browser
+        │
+        ▼
+ChirpStack UI / API
+```
+
+Database ports should not be exposed to the LAN unless there is a specific requirement.
+
+Docker's management API must never be exposed.
+
+The infrastructure should not be directly exposed to the Internet.
+
+---
+
+# 19. Security
+
+The Raspberry Pi will eventually control physical devices, therefore security is part of the architecture.
+
+Principles:
+
+* expose the minimum number of ports;
+* prefer LAN-only access;
+* authenticate MQTT clients where appropriate;
+* never expose PostgreSQL unnecessarily;
+* never hardcode credentials;
+* never commit secrets;
+* use least privilege where practical;
+* avoid unnecessary container privileges;
+* keep container images maintained;
+* keep configuration reproducible;
+* review exposed ports before adding services.
+
+---
+
+# 20. Configuration Management
+
+Configuration should be:
 
 * explicit;
 * reproducible;
@@ -350,348 +638,413 @@ Configuration must be:
 Secrets must not be hardcoded into:
 
 * `docker-compose.yml`;
-* source code;
-* configuration files committed to Git.
+* application source code;
+* committed configuration files.
 
-Use `.env` or another appropriate secret-management mechanism for local development.
-
-A `.env.example` should be provided when environment variables are required.
-
----
-
-# 10. Networking
-
-The infrastructure is primarily local.
-
-Docker networks should be explicitly defined.
-
-Only services that need to communicate externally should expose ports on the Raspberry Pi host.
-
-Internal service-to-service communication should use Docker networking whenever possible.
-
-The following concepts should remain clearly separated:
+Use:
 
 ```text
-Docker internal network
-        │
-        ├── ChirpStack
-        ├── Mosquitto
-        └── Database
-
-Raspberry Pi LAN interface
-        │
-        ├── MQTT access when required
-        ├── ChirpStack UI/API when required
-        └── Gateway communication
+.env
 ```
 
-Do not expose database ports to the LAN unless there is a clear technical requirement.
+for local secrets when appropriate.
 
-Do not expose Docker's management API.
+Provide:
 
-Do not expose services directly to the Internet unless explicitly required.
+```text
+.env.example
+```
 
----
-
-# 11. Security
-
-Security is important because the Raspberry Pi will eventually control physical devices.
-
-Follow these principles:
-
-* minimize exposed ports;
-* prefer LAN-only access;
-* use authentication where appropriate;
-* do not expose databases unnecessarily;
-* do not hardcode credentials;
-* do not commit secrets;
-* use least privilege where practical;
-* avoid unnecessary Docker privileges;
-* document exposed ports;
-* keep dependencies and container images maintained.
+for required variables without including real credentials.
 
 ---
 
-# 12. Version Management
+# 21. MQTT Architecture
 
-Do not blindly use old tutorials or outdated Docker Compose examples.
+Mosquitto is the central MQTT broker.
 
-Before changing the infrastructure, verify compatibility with the current official documentation for:
+The infrastructure uses MQTT in two directions.
 
-* ChirpStack [documentation](https://www.chirpstack.io/docs/);
-* Mosquitto [documentation](https://mosquitto.org/documentation/);
-* the selected database;
-* Docker;
-* Docker Compose.
+### Gateway direction
 
-Prefer pinned or explicitly controlled image versions over unbounded `latest` tags for production-like deployments.
+```text
+LPS8N
+   │
+   │ Semtech UDP
+   ▼
+Gateway Bridge
+   │
+   │ MQTT
+   ▼
+Mosquitto
+   │
+   ▼
+ChirpStack
+```
 
-ARM64 compatibility must always be considered.
-
----
-
-# 13. ChirpStack Requirements
-
-The ChirpStack deployment must follow the architecture recommended by the **current official ChirpStack documentation**.
-
-Do not assume that configurations from older ChirpStack releases are still valid.
-
-Before modifying ChirpStack configuration:
-
-1. Identify the current supported version.
-2. Verify the official Docker image.
-3. Verify the required database.
-4. Verify MQTT configuration.
-5. Verify gateway communication requirements.
-6. Verify ARM64 support.
-7. Verify configuration file format.
-8. Verify required services and dependencies.
-
----
-
-# 14. MQTT Requirements
-
-Mosquitto is the central messaging layer.
-
-The MQTT architecture must allow:
+### Application direction
 
 ```text
 ChirpStack
-    │
-    ▼
+   │
+   │ MQTT integration
+   ▼
 Mosquitto
-    │
-    ├── Symfony
-    ├── future services
-    └── future IoT applications
+   │
+   │ MQTT
+   ▼
+Symfony
 ```
 
-The MQTT topic structure should remain compatible with ChirpStack's standard MQTT integration unless there is a strong reason to introduce an abstraction layer.
+The Gateway Bridge and ChirpStack therefore share the same MQTT broker.
 
-Do not unnecessarily transform or duplicate messages on the Raspberry Pi.
+The MQTT topic structure must remain aligned with the configured ChirpStack region.
+
+For EU868, the current configuration uses the `eu868` topic prefix.
+
+ChirpStack's documentation notes that the region prefix is significant for MQTT topic configuration in v4.
 
 ---
 
-# 15. Observability
+# 22. Observability and Troubleshooting
 
-The infrastructure should be easy to diagnose.
+The infrastructure must remain easy to diagnose.
 
-Docker Compose should make it possible to inspect:
+Useful commands:
 
 ```bash
 docker compose ps
+```
+
+```bash
 docker compose logs
+```
+
+```bash
 docker compose logs chirpstack
+```
+
+```bash
+docker compose logs chirpstack-gateway-bridge
+```
+
+```bash
 docker compose logs mosquitto
 ```
 
-Health checks should be implemented where they provide meaningful value.
+MQTT gateway traffic can be inspected with:
 
-The infrastructure should make it easy to identify:
+```bash
+mosquitto_sub -v -t "+/gateway/#"
+```
 
-* container failures;
-* database failures;
-* MQTT failures;
-* ChirpStack failures;
-* connectivity problems;
-* gateway communication problems.
+ChirpStack documents this as a useful way to verify that gateway traffic is reaching the MQTT broker.
+
+When diagnosing a LoRaWAN uplink, verify the pipeline in order:
+
+```text
+1. SE01-LB transmits
+        ↓
+2. LPS8N receives
+        ↓
+3. LPS8N sends UDP :1700
+        ↓
+4. Gateway Bridge receives UDP
+        ↓
+5. Gateway Bridge publishes MQTT
+        ↓
+6. Mosquitto receives MQTT
+        ↓
+7. ChirpStack receives the gateway event
+        ↓
+8. ChirpStack processes the LoRaWAN frame
+        ↓
+9. ChirpStack publishes application data
+        ↓
+10. Symfony consumes the MQTT message
+```
+
+This order should be preserved during troubleshooting.
 
 ---
 
-# 16. Deployment
+# 23. Deployment
 
 The infrastructure should be deployable using a small number of reproducible commands.
 
-Typical operations should include:
+From the project directory:
 
 ```bash
 docker compose up -d
-docker compose down
-docker compose restart
+```
+
+Check the services:
+
+```bash
 docker compose ps
+```
+
+Check logs:
+
+```bash
 docker compose logs
 ```
 
-Do not require manual installation of application services on the Debian host unless technically unavoidable.
+Restart the stack:
+
+```bash
+docker compose restart
+```
+
+Stop the stack:
+
+```bash
+docker compose down
+```
+
+The infrastructure should automatically restart after a Raspberry Pi reboot.
 
 ---
 
-# 17. Backup and Recovery
+# 24. Backup and Recovery
 
-The infrastructure must be designed with migration and recovery in mind.
+The infrastructure must be recoverable.
 
-Important persistent data must be identifiable.
+Important persistent data must be identifiable and backed up.
 
-It should be possible to:
-
-1. stop the stack;
-2. back up persistent data;
-3. recreate the Docker environment;
-4. restore the data;
-5. restart the infrastructure.
-
-The exact backup procedure should be documented as the project evolves.
-
----
-
-# 18. Development Philosophy
-
-This is a long-term project.
-
-The first objective is **not** to build the complete IoT platform immediately.
-
-The first objective is to establish a reliable data pipeline:
+The recovery process should conceptually be:
 
 ```text
-LoRaWAN Sensor
-      ↓
-LoRaWAN Gateway
-      ↓
-ChirpStack
-      ↓
-MQTT
-      ↓
-Symfony
-      ↓
-MySQL
+Stop stack
+    ↓
+Backup persistent data
+    ↓
+Recreate Docker environment
+    ↓
+Restore persistent data
+    ↓
+Start stack
+    ↓
+Validate ChirpStack
+    ↓
+Validate MQTT
+    ↓
+Validate gateway
+    ↓
+Validate sensor data
 ```
+
+The detailed operational backup procedure is maintained in:
+
+```text
+docs/OPERATIONS.md
+```
+
+Backups should eventually be stored on separate physical storage rather than only on the Raspberry Pi.
+
+---
+
+# 25. Development Philosophy
+
+This is a long-term IoT project.
+
+The goal of the first phase is **reliability before complexity**.
+
+The first milestone is simply:
+
+> Receive real sensor data from the SE01-LB through the LPS8N, process it with ChirpStack, publish it through MQTT, and make it available to Symfony over the local network.
 
 Everything else should be introduced progressively.
 
-Avoid premature complexity.
+Do not introduce:
 
-Do not add:
-
-* Kafka;
 * Kubernetes;
-* additional databases;
+* Kafka;
 * additional message brokers;
-* monitoring stacks;
+* additional databases;
+* complex monitoring stacks;
+* unnecessary microservices;
 
 unless there is a demonstrated technical requirement.
 
+The Raspberry Pi has only 2 GB RAM, so resource efficiency is an explicit architectural consideration.
+
 ---
 
-# 19. Phase 1 Scope
-
-The current phase is limited to:
+# 26. Phase 1 Scope
 
 ### Raspberry Pi
 
+* Debian GNU/Linux 13 ARM64
 * Docker
 * Docker Compose
 * ChirpStack
+* ChirpStack Gateway Bridge
 * Mosquitto
-* PostgreSQL (ChirpStack database)
-* Redis (ChirpStack dependency)
+* PostgreSQL
+* Redis
 
-### Hardware
+### LoRaWAN hardware
 
-* LPS8N
-* SE01-LB
+* Dragino LPS8N
+* Dragino SE01-LB
 
-### Laptop
+### Application environment
 
 * Symfony
 * MySQL
 
-The first milestone is:
+### Phase 1 milestone
 
-> Receive real sensor data from the SE01-LB through the LPS8N, process it with ChirpStack, publish it through MQTT, and make it available to Symfony over the local network.
+```text
+SE01-LB
+   ↓
+LPS8N
+   ↓
+ChirpStack Gateway Bridge
+   ↓
+Mosquitto
+   ↓
+ChirpStack
+   ↓
+Mosquitto
+   ↓
+Symfony
+   ↓
+MySQL
+```
 
 ---
 
-# 20. Future Evolution
+# 27. Future Evolution
 
-The architecture should eventually support:
+The architecture is intended to support additional IoT capabilities without changing the core infrastructure.
 
-* multiple LoRaWAN sensors;
+Potential future additions include:
+
+* additional LoRaWAN sensors;
 * soil monitoring;
-* temperature and humidity monitoring;
+* temperature monitoring;
+* humidity monitoring;
 * automatic irrigation;
 * water management;
 * aquaponics;
 * connected chicken coop;
-* solar power monitoring;
+* solar-power monitoring;
 * pumps;
 * electrovalves;
 * actuators;
 * home automation;
+* Apple Home / HomeKit integration;
 * additional Raspberry Pi nodes;
-* potentially a dedicated application server.
+* a dedicated application server.
 
-The Raspberry Pi infrastructure should therefore remain modular and independent from the application layer.
-
----
-
-# 21. Rules for GitHub Copilot
-
-When modifying or generating code/configuration in this repository, Copilot must follow these rules:
-
-1. **Read this README before making architectural changes.**
-2. Do not introduce services that are outside the current project scope without explaining why.
-3. Do not move Symfony or MySQL to the Raspberry Pi.
-4. Do not introduce cloud IoT dependencies.
-5. Do not introduce The Things Network.
-6. Do not replace MQTT with another messaging system without a documented technical reason.
-7. Prefer official documentation and current versions.
-8. Verify ARM64 compatibility.
-9. Prefer Docker Compose over manual host installation.
-10. Keep persistent data outside ephemeral containers.
-11. Never hardcode secrets.
-12. Avoid unnecessary exposed ports.
-13. Do not use deprecated Docker Compose syntax.
-14. Do not assume old ChirpStack configurations are still valid.
-15. When changing infrastructure, explain the impact on the existing architecture.
-16. Keep the architecture simple and modular.
-17. Preserve the separation between IoT infrastructure and application/backend services.
+The infrastructure layer should remain independent from the application layer.
 
 ---
 
-# 22. Current Target
+# 28. Rules for GitHub Copilot
 
-The current target architecture is:
+When modifying this repository, Copilot must follow these rules:
+
+1. Read this README before making architectural changes.
+2. Preserve the separation between IoT infrastructure and application services.
+3. Do not move Symfony or MySQL to the Raspberry Pi without an explicit architectural decision.
+4. Do not introduce TTN.
+5. Do not introduce mandatory cloud IoT services.
+6. Do not replace MQTT without a documented technical reason.
+7. Keep the LPS8N → Gateway Bridge → Mosquitto → ChirpStack architecture intact.
+8. Do not bypass the Gateway Bridge when using the LPS8N's Semtech UDP packet forwarder.
+9. Verify changes against the current official ChirpStack documentation.
+10. Verify ARM64 compatibility.
+11. Prefer Docker Compose over manual host installation.
+12. Keep persistent data outside ephemeral containers.
+13. Never hardcode secrets.
+14. Avoid unnecessary exposed ports.
+15. Do not expose PostgreSQL to the LAN without a specific requirement.
+16. Do not introduce unnecessary services.
+17. Do not assume old ChirpStack configurations remain valid.
+18. Check MQTT topic compatibility when changing ChirpStack or Gateway Bridge configuration.
+19. Explain the impact of infrastructure changes on the existing architecture.
+20. Keep the architecture simple and modular.
+21. Consider the Raspberry Pi's 2 GB RAM constraint before adding services.
+22. Do not introduce Kubernetes, Kafka, another MQTT broker, or another database without a demonstrated requirement.
+
+---
+
+# 29. Authoritative Architecture
+
+For Phase 1, the following diagram is the authoritative architecture:
 
 ```text
                          LoRaWAN
                             │
                             ▼
-                     ┌────────────┐
-                     │   LPS8N    │
-                     │   Gateway  │
-                     └─────┬──────┘
+                    ┌──────────────┐
+                    │    SE01-LB   │
+                    │    Sensor    │
+                    └──────┬───────┘
                            │
-                           │ LAN
                            ▼
-┌─────────────────────────────────────────┐
-│             RASPBERRY PI                │
-│                                         │
-│                 Docker                  │
-│                                         │
-│  ┌─────────────┐      ┌──────────────┐  │
-│  │ ChirpStack  │─────►│  Mosquitto   │  │
-│  └──────┬──────┘      └──────┬───────┘  │
-│         │                    │          │
-│         ▼                    │          │
-│  ┌─────────────┐             │          │
-│  │ ChirpStack  │             │          │
-│  │  Database   │             │          │
-│  └─────────────┘             │          │
-└──────────────────────────────┼──────────┘
-                               │
-                            MQTT/LAN
-                               │
-                               ▼
-                     ┌──────────────────┐
-                     │      LAPTOP      │
-                     │                  │
-                     │    Symfony       │
-                     │       │          │
-                     │       ▼          │
-                     │      MySQL       │
-                     └──────────────────┘
+                    ┌──────────────┐
+                    │    LPS8N     │
+                    │   Gateway    │
+                    └──────┬───────┘
+                           │
+                           │ Semtech UDP
+                           │ UDP :1700
+                           ▼
+┌──────────────────────────────────────────────────────┐
+│                    RASPBERRY PI                      │
+│                                                      │
+│  ┌──────────────────────────────┐                    │
+│  │ ChirpStack Gateway Bridge    │                    │
+│  │                              │                    │
+│  │ Semtech UDP → MQTT           │                    │
+│  └──────────────┬───────────────┘                    │
+│                 │                                    │
+│                 ▼                                    │
+│          ┌──────────────┐                            │
+│          │  Mosquitto   │                            │
+│          │ MQTT Broker  │                            │
+│          └──────┬───────┘                            │
+│                 │                                    │
+│                 ▼                                    │
+│          ┌──────────────┐                            │
+│          │  ChirpStack  │                            │
+│          └──────┬───────┘                            │
+│                 │                                    │
+│          ┌──────┴──────┐                             │
+│          ▼             ▼                             │
+│   ┌────────────┐ ┌────────────┐                      │
+│   │ PostgreSQL │ │    Redis   │                      │
+│   └────────────┘ └────────────┘                      │
+│                                                      │
+└──────────────────────┬───────────────────────────────┘
+                       │
+                       │ MQTT
+                       ▼
+                ┌───────────────┐
+                │    LAPTOP     │
+                │               │
+                │   Symfony     │
+                │      │        │
+                │      ▼        │
+                │    MySQL      │
+                └───────────────┘
 ```
 
 This architecture is the baseline for Phase 1.
 
-Any future architectural change should be deliberate, documented, and justified.
+Any future architectural change should be deliberate, documented and justified.
+
+---
+
+## References
+
+* [ChirpStack Architecture](https://www.chirpstack.io/docs/architecture.html)
+* [ChirpStack Gateway Connection Guide](https://www.chirpstack.io/docs/guides/connect-gateway.html)
+* [ChirpStack Gateway Configuration](https://www.chirpstack.io/docs/gateway-configuration/)
+* [ChirpStack Gateway Bridge — Semtech UDP](https://www.chirpstack.io/docs/chirpstack-gateway-bridge/backends/semtech-udp.html)
+* [ChirpStack Gateway Bridge — MQTT](https://www.chirpstack.io/docs/chirpstack-gateway-bridge/integrations/mqtt.html)
+* [ChirpStack — MQTT](https://www.chirpstack.io/docs/chirpstack/backends/mqtt.html)
