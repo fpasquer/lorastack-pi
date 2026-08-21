@@ -271,15 +271,18 @@ For a Semtech UDP gateway, the gateway's packet-forwarder configuration points t
 
 # 7. Raspberry Pi Services
 
-The Raspberry Pi currently runs the following Docker services.
+The Raspberry Pi currently runs the following Docker services (all defined in `docker-compose.yml`).
 
-| Service                     | Purpose                           |
-| --------------------------- | --------------------------------- |
-| `chirpstack`                | LoRaWAN Network Server            |
-| `chirpstack-gateway-bridge` | Semtech UDP → MQTT gateway bridge |
-| `mosquitto`                 | MQTT broker                       |
-| `postgres`                  | ChirpStack persistent database    |
-| `redis`                     | ChirpStack supporting service     |
+| Service                     | Image                                    | Purpose                               |
+| --------------------------- | ---------------------------------------- | ------------------------------------- |
+| `chirpstack`                | `chirpstack/chirpstack:4`                | LoRaWAN Network Server (v4, EU868)    |
+| `chirpstack-gateway-bridge` | `chirpstack/chirpstack-gateway-bridge:4` | Semtech UDP → MQTT gateway bridge     |
+| `mosquitto`                 | `eclipse-mosquitto:2`                    | MQTT broker                           |
+| `postgres`                  | `postgres:16-alpine`                     | ChirpStack persistent database        |
+| `redis`                     | `redis:7-alpine`                         | ChirpStack cache / queues / metrics   |
+
+All services use `restart: unless-stopped` and per-service Docker log rotation
+(json-file, `max-size: 10m`, `max-file: 3`).
 
 These services form the infrastructure layer.
 
@@ -374,32 +377,32 @@ Do not introduce another message broker without a demonstrated requirement.
 
 PostgreSQL is the persistent database used by ChirpStack.
 
-The database is internal infrastructure and should not normally be exposed to the LAN.
+Verified configuration (from `docker-compose.yml` and `configuration/postgresql/`):
 
-Persistent PostgreSQL data must survive:
+* image: `postgres:16-alpine`;
+* database: `chirpstack`;
+* user: `chirpstack`;
+* password: injected from `POSTGRES_PASSWORD` in `.env`;
+* persistent volume: `postgresqldata` mounted at `/var/lib/postgresql/data`;
+* initialization: `configuration/postgresql/initdb/001-chirpstack.sql` creates the `pg_trgm` extension, required by ChirpStack v4;
+* network: attached only to the internal Docker network — no port is published to the LAN.
 
-* container recreation;
-* Docker restart;
-* Raspberry Pi reboot.
-
-The required PostgreSQL extensions and initialization are maintained in:
-
-```text
-configuration/postgresql/
-```
-
-The exact database version should follow the requirements of the deployed ChirpStack version.
+The database is internal infrastructure and must not be exposed to the LAN.
 
 ---
 
 # 12. Redis
 
-Redis is deployed as a ChirpStack supporting service.
+Redis is deployed as a ChirpStack supporting service (cache, queues, metrics).
 
-It should not be considered a general-purpose application database or message broker.
+Verified configuration (from `docker-compose.yml`):
 
-Its configuration must follow the requirements of the installed ChirpStack version.
+* image: `redis:7-alpine`;
+* command: `redis-server --save 300 1 --save 60 100 --appendonly no` (RDB snapshots only, no AOF);
+* persistent volume: `redisdata` mounted at `/data`;
+* network: attached only to the internal Docker network — no port is published to the LAN.
 
+It is not a general-purpose application database or message broker.
 No application should use Redis for unrelated purposes unless the architecture is explicitly changed.
 
 ---
@@ -491,12 +494,16 @@ The repository currently follows this structure:
 /opt/iot/
 │
 ├── docker-compose.yml
-├── .env
+├── .env                  # secrets, git-ignored, mode 600
 ├── .env.example
 ├── README.md
+├── PLAN.md
 │
 ├── docs/
 │   └── OPERATIONS.md
+│
+├── Datasheet/
+│   └── LoRaWan/          # hardware datasheets
 │
 └── configuration/
     │
@@ -505,15 +512,20 @@ The repository currently follows this structure:
     │   └── region_eu868.toml
     │
     ├── chirpstack-gateway-bridge/
+    │   └── chirpstack-gateway-bridge.toml
     │
     ├── mosquitto/
     │   └── config/
+    │       ├── mosquitto.conf
+    │       ├── passwd          # generated, git-ignored
+    │       └── acl
     │
     └── postgresql/
         └── initdb/
+            └── 001-chirpstack.sql
 ```
 
-Secrets such as `.env` and MQTT credentials must not be committed to Git.
+Secrets such as `.env` and the Mosquitto password file must not be committed to Git.
 
 Operational procedures are documented in:
 
@@ -527,13 +539,28 @@ docs/OPERATIONS.md
 
 Important data must never depend exclusively on a container's writable filesystem.
 
-Persistent storage is required for:
+### Persistent data (named Docker volumes)
 
-* PostgreSQL data;
-* Mosquitto data;
-* Mosquitto configuration;
-* Mosquitto logs where applicable;
-* ChirpStack configuration.
+| Volume           | Content                                                        |
+| ---------------- | -------------------------------------------------------------- |
+| `postgresqldata` | ChirpStack database — the critical state                       |
+| `redisdata`      | Redis RDB snapshots (cache; safe to lose, kept for warm restarts) |
+| `mosquittodata`  | MQTT retained messages and subscriptions (`persistence true`)  |
+| `mosquittolog`   | `mosquitto.log`                                                |
+
+### Configuration (bind mounts, read-only inside containers)
+
+| Path                                                                     | Mounted into                |
+| ------------------------------------------------------------------------ | --------------------------- |
+| `configuration/chirpstack/`                                              | chirpstack                  |
+| `configuration/chirpstack-gateway-bridge/chirpstack-gateway-bridge.toml` | chirpstack-gateway-bridge   |
+| `configuration/mosquitto/config/`                                        | mosquitto                   |
+| `configuration/postgresql/initdb/`                                       | postgres (first init only)  |
+
+### Ephemeral container data
+
+Container writable layers and ChirpStack's internal state (it stores everything
+durable in PostgreSQL and Redis) are not relied upon for persistence.
 
 The infrastructure must survive:
 
@@ -545,7 +572,8 @@ Docker restart
 Raspberry Pi reboot
 ```
 
-Persistent Docker volumes or explicitly mounted persistent directories must therefore be used.
+Verified with a full `docker compose down && docker compose up -d` cycle
+(see `docs/OPERATIONS.md`).
 
 ---
 
@@ -553,23 +581,35 @@ Persistent Docker volumes or explicitly mounted persistent directories must ther
 
 The infrastructure is primarily local.
 
-There are two distinct networking layers.
+### Published ports (complete list, from `docker-compose.yml`)
 
-### Docker network
+| Port        | Service                     | Purpose                                                  |
+| ----------- | --------------------------- | -------------------------------------------------------- |
+| `1883/tcp`  | mosquitto                   | MQTT for the laptop (Symfony); anonymous access rejected |
+| `8080/tcp`  | chirpstack                  | Web UI + gRPC API administration from the LAN            |
+| `1700/udp`  | chirpstack-gateway-bridge   | Semtech UDP packet-forwarder endpoint for the LPS8N      |
 
-Used for internal communication between containers:
+### Internal only (not published)
 
-```text
-ChirpStack
-Gateway Bridge
-Mosquitto
-PostgreSQL
-Redis
-```
+| Port        | Service    | Notes                                          |
+| ----------- | ---------- | ---------------------------------------------- |
+| `5432/tcp`  | postgres   | internal network only                          |
+| `6379/tcp`  | redis      | internal network only                          |
+| `8081/tcp`  | chirpstack | monitoring `/health`, used by the healthcheck  |
+
+### Docker networks
+
+Two bridge networks are defined:
+
+* `iot-internal` (`internal: true`) — all five services; no internet egress, no published ports. PostgreSQL and Redis exist only on this network.
+* `iot-lan` — mosquitto, chirpstack and chirpstack-gateway-bridge; carries the published ports.
+
+Docker cannot publish ports on an `internal` network, which is why the
+LAN-facing services are attached to both networks.
 
 ### Raspberry Pi LAN
 
-Used for external communication such as:
+External communication over the LAN:
 
 ```text
 LPS8N
@@ -583,21 +623,22 @@ and:
 ```text
 Laptop
    │
-   │ MQTT
+   │ MQTT :1883
    ▼
 Mosquitto
 ```
 
-and, when required:
+and:
 
 ```text
 Laptop / browser
         │
+        │ :8080
         ▼
 ChirpStack UI / API
 ```
 
-Database ports should not be exposed to the LAN unless there is a specific requirement.
+Database ports are never exposed to the LAN.
 
 Docker's management API must never be exposed.
 
@@ -663,6 +704,45 @@ for required variables without including real credentials.
 
 Mosquitto is the central MQTT broker.
 
+### Broker
+
+* host (LAN): the Raspberry Pi IP, port `1883`;
+* host (Docker network): `mosquitto:1883`;
+* authentication: `allow_anonymous false`; users in `configuration/mosquitto/config/passwd`, per-topic permissions in `configuration/mosquitto/config/acl`;
+* TLS is not currently configured (LAN-only trust; may be added later on a second listener).
+
+### Users and ACLs
+
+| User            | Permissions                                              |
+| --------------- | -------------------------------------------------------- |
+| `chirpstack`    | read/write `eu868/gateway/#`, read/write `application/#` |
+| `gatewaybridge` | read/write `eu868/gateway/#`                             |
+| `symfony`       | read-only `application/#` (reserved for the laptop)      |
+
+### Topic structure (ChirpStack v4, region prefix `eu868`)
+
+Gateway topics (Gateway Bridge ↔ ChirpStack):
+
+```text
+eu868/gateway/<gateway_id>/event/<event>
+eu868/gateway/<gateway_id>/state/<state>     (retained)
+eu868/gateway/<gateway_id>/command/<command>
+```
+
+Application topics (ChirpStack ↔ Symfony):
+
+```text
+application/<application_id>/device/<dev_eui>/event/<event>
+application/<application_id>/device/<dev_eui>/command/<command>
+```
+
+The Gateway Bridge publishes with the protobuf marshaler; the ChirpStack
+application integration uses JSON (`json = true` in `chirpstack.toml`).
+
+The `eu868` prefix is defined by `topic_prefix` in
+`configuration/chirpstack/region_eu868.toml` and must match the Gateway
+Bridge topic templates.
+
 The infrastructure uses MQTT in two directions.
 
 ### Gateway direction
@@ -698,11 +778,7 @@ Symfony
 
 The Gateway Bridge and ChirpStack therefore share the same MQTT broker.
 
-The MQTT topic structure must remain aligned with the configured ChirpStack region.
-
-For EU868, the current configuration uses the `eu868` topic prefix.
-
-ChirpStack's documentation notes that the region prefix is significant for MQTT topic configuration in v4.
+The MQTT topic structure must remain aligned with the configured ChirpStack region (`eu868`).
 
 ---
 
@@ -732,13 +808,15 @@ docker compose logs chirpstack-gateway-bridge
 docker compose logs mosquitto
 ```
 
-MQTT gateway traffic can be inspected with:
+MQTT gateway traffic can be inspected with (authentication is required — anonymous connections are rejected):
 
 ```bash
-mosquitto_sub -v -t "+/gateway/#"
+mosquitto_sub -h <pi-ip> -p 1883 \
+  -u "$MQTT_CHIRPSTACK_USERNAME" -P "$MQTT_CHIRPSTACK_PASSWORD" \
+  -v -t "eu868/gateway/#"
 ```
 
-ChirpStack documents this as a useful way to verify that gateway traffic is reaching the MQTT broker.
+This verifies that gateway traffic is reaching the MQTT broker.
 
 When diagnosing a LoRaWAN uplink, verify the pipeline in order:
 
@@ -771,6 +849,15 @@ This order should be preserved during troubleshooting.
 # 23. Deployment
 
 The infrastructure should be deployable using a small number of reproducible commands.
+
+First-time setup: create `.env` from the template and fill in random secrets
+(see `.env.example` for the complete variable list and generation instructions):
+
+```bash
+cp .env.example .env
+# edit .env, then generate the Mosquitto password file as documented in
+# docs/OPERATIONS.md ("Regenerating the Mosquitto password file")
+```
 
 From the project directory:
 
@@ -974,67 +1061,9 @@ When modifying this repository, Copilot must follow these rules:
 
 # 29. Authoritative Architecture
 
-For Phase 1, the following diagram is the authoritative architecture:
-
-```text
-                         LoRaWAN
-                            │
-                            ▼
-                    ┌──────────────┐
-                    │    SE01-LB   │
-                    │    Sensor    │
-                    └──────┬───────┘
-                           │
-                           ▼
-                    ┌──────────────┐
-                    │    LPS8N     │
-                    │   Gateway    │
-                    └──────┬───────┘
-                           │
-                           │ Semtech UDP
-                           │ UDP :1700
-                           ▼
-┌──────────────────────────────────────────────────────┐
-│                    RASPBERRY PI                      │
-│                                                      │
-│  ┌──────────────────────────────┐                    │
-│  │ ChirpStack Gateway Bridge    │                    │
-│  │                              │                    │
-│  │ Semtech UDP → MQTT           │                    │
-│  └──────────────┬───────────────┘                    │
-│                 │                                    │
-│                 ▼                                    │
-│          ┌──────────────┐                            │
-│          │  Mosquitto   │                            │
-│          │ MQTT Broker  │                            │
-│          └──────┬───────┘                            │
-│                 │                                    │
-│                 ▼                                    │
-│          ┌──────────────┐                            │
-│          │  ChirpStack  │                            │
-│          └──────┬───────┘                            │
-│                 │                                    │
-│          ┌──────┴──────┐                             │
-│          ▼             ▼                             │
-│   ┌────────────┐ ┌────────────┐                      │
-│   │ PostgreSQL │ │    Redis   │                      │
-│   └────────────┘ └────────────┘                      │
-│                                                      │
-└──────────────────────┬───────────────────────────────┘
-                       │
-                       │ MQTT
-                       ▼
-                ┌───────────────┐
-                │    LAPTOP     │
-                │               │
-                │   Symfony     │
-                │      │        │
-                │      ▼        │
-                │    MySQL      │
-                └───────────────┘
-```
-
-This architecture is the baseline for Phase 1.
+The single authoritative Phase 1 architecture diagram is the one in
+section 4.1 (Current Architecture). It is intentionally not duplicated here
+so that two copies cannot drift apart.
 
 Any future architectural change should be deliberate, documented and justified.
 
