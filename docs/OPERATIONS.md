@@ -100,6 +100,38 @@ MQTT authorization is enforced by `configuration/mosquitto/config/acl`:
 - `chirpstack`: read/write `eu868/gateway/#`, `application/#`
 - `gatewaybridge`: read/write `eu868/gateway/#`
 - `symfony`: **read-only** `application/#` (verified: its publishes are dropped)
+- `watering_dev`: write only `gardenhub/dev/watering/avocado/set`, read only
+  `gardenhub/dev/watering/avocado`
+- `watering_sim`: read only the dev `/set` topic, write only its state topic
+
+### Enable the dev watering sandbox
+
+The ACL entries alone do not create accounts. On the Pi, add two separate
+passwords to the existing broker password file (do not recreate or overwrite
+it; the ChirpStack and Symfony accounts must remain):
+
+```bash
+cd /opt/iot
+docker run --rm -it --user 1883:1883 \
+  -v "$PWD/configuration/mosquitto/config:/cfg" \
+  eclipse-mosquitto:2 mosquitto_passwd /cfg/passwd watering_dev
+docker run --rm -it --user 1883:1883 \
+  -v "$PWD/configuration/mosquitto/config:/cfg" \
+  eclipse-mosquitto:2 mosquitto_passwd /cfg/passwd watering_sim
+docker compose restart mosquitto
+```
+
+Use different passwords. Store only the `watering_sim` password in the
+untracked GardenHub root `.env` as `WATERING_SIM_PASSWORD`; use `watering_dev`
+only to publish test commands. `symfony` stays subscribe-only, and neither
+new account has any `zigbee2mqtt/#` permission. Do not add production
+Zigbee2MQTT credentials to the Pi's development Compose file.
+
+Check the ACL with `mosquitto_pub` as `watering_dev`: a publish to
+`gardenhub/dev/watering/avocado/set` is permitted, while a publish to
+`zigbee2mqtt/avocado/set` must be denied. MQTT QoS 0 can silently drop denied
+publishes, so observe the broker log or subscribe with an authorized account
+when verifying; a successful client exit alone is not proof of permission.
 
 ## 6. Daily operations
 
