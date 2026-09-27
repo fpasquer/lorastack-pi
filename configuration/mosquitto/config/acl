@@ -24,3 +24,13 @@ topic readwrite eu868/gateway/#
 # events. It must not be able to publish or to read gateway topics.
 user symfony
 topic read application/#
+
+# Development watering sandbox. Neither identity can access the production
+# zigbee2mqtt/# namespace. The real pump must never use these credentials.
+user watering_dev
+topic write gardenhub/dev/watering/avocado/set
+topic read gardenhub/dev/watering/avocado
+
+user watering_sim
+topic read gardenhub/dev/watering/avocado/set
+topic write gardenhub/dev/watering/avocado
