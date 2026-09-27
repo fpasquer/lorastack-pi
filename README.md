@@ -750,6 +750,13 @@ Mosquitto is the central MQTT broker.
 | `chirpstack`    | read/write `eu868/gateway/#`, read/write `application/#` |
 | `gatewaybridge` | read/write `eu868/gateway/#`                             |
 | `symfony`       | read-only `application/#`                                |
+| `watering_dev`  | write dev watering `/set`, read dev watering state       |
+| `watering_sim`  | read dev watering `/set`, write dev watering state       |
+
+The two watering users are optional development accounts. Their exact topic
+ACLs are in `configuration/mosquitto/config/acl`; they cannot reach the
+production `zigbee2mqtt/#` namespace. See `docs/OPERATIONS.md` for the
+interactive password creation steps before starting GardenHub's simulator.
 
 ## Topic structure
 
