@@ -106,26 +106,62 @@ MQTT authorization is enforced by `configuration/mosquitto/config/acl`:
 
 ### Enable the dev watering sandbox
 
-The ACL entries alone do not create accounts. On the Pi, add two separate
-passwords to the existing broker password file (do not recreate or overwrite
-it; the ChirpStack and Symfony accounts must remain):
+GardenHub development and production use the same Mosquitto broker. Run
+these commands on that shared broker's host, from its lorastack checkout
+(`/opt/iot` below; adjust if installed elsewhere). No separate development
+broker is required. First ensure this checkout contains the watering ACL
+entries above.
+
+The ACL entries alone do not create accounts. Add two separate passwords
+to the existing broker password file; never use `-c`, delete, or recreate
+it, because the ChirpStack and Symfony accounts must remain. Enter passwords
+at the interactive prompts, not in command arguments or shell history.
+
+The temporary container runs as root because `mosquitto_passwd` creates a
+backup beside `passwd`; owning the file as UID 1883 is insufficient when
+the configuration directory belongs to the host user. Only the password
+file's ownership and permissions are set below; directory permissions stay
+unchanged. The subshell stops on failure without exiting your login shell,
+and reloads the broker only after both updates and permission commands succeed.
 
 ```bash
-cd /opt/iot
-docker run --rm -it --user 1883:1883 \
-  -v "$PWD/configuration/mosquitto/config:/cfg" \
-  eclipse-mosquitto:2 mosquitto_passwd /cfg/passwd watering_dev
-docker run --rm -it --user 1883:1883 \
-  -v "$PWD/configuration/mosquitto/config:/cfg" \
-  eclipse-mosquitto:2 mosquitto_passwd /cfg/passwd watering_sim
-docker compose restart mosquitto
+(
+  set -eu
+  cd /opt/iot
+  test -f configuration/mosquitto/config/passwd
+  docker run --rm -it --user 0:0 --entrypoint sh \
+    --mount "type=bind,src=$PWD/configuration/mosquitto/config,dst=/cfg" \
+    eclipse-mosquitto:2 -ec '
+      test -f /cfg/passwd
+      mosquitto_passwd /cfg/passwd watering_dev
+      mosquitto_passwd /cfg/passwd watering_sim
+      chown 1883:1883 /cfg/passwd
+      chmod 0600 /cfg/passwd
+    '
+  docker compose kill --signal SIGHUP mosquitto
+  docker compose logs --since 2m --tail 100 mosquitto
+)
 ```
+
+The explicit `SIGHUP` sends a reload signal, not the default kill signal.
+Mosquitto reloads both `password_file` and `acl_file` without restarting the
+broker. Connected clients are not disconnected by the password reload;
+reloaded ACLs apply to existing subscriptions, so preserve production rules.
+Check the logs for the configuration reload and any password/ACL loading or
+permission errors. Signal delivery alone does not prove a successful reload.
+If an update fails, correct the error before rerunning the sequence; an
+earlier successful password update may already be on disk.
+
+References: [Mosquitto configuration reload behavior](https://mosquitto.org/man/mosquitto-conf-5.html)
+and [Docker Compose signal option](https://docs.docker.com/reference/cli/docker/compose/kill/).
 
 Use different passwords. Store only the `watering_sim` password in the
 untracked GardenHub root `.env` as `WATERING_SIM_PASSWORD`; use `watering_dev`
-only to publish test commands. `symfony` stays subscribe-only, and neither
-new account has any `zigbee2mqtt/#` permission. Do not add production
-Zigbee2MQTT credentials to the Pi's development Compose file.
+only to publish test commands. Both accounts are exclusively for simulation
+on the shared broker, restricted to the two dev topics above. `symfony`
+stays subscribe-only, and neither new account has any `zigbee2mqtt/#`
+permission. Do not add production Zigbee2MQTT credentials to GardenHub's
+development Compose file.
 
 Check the ACL with `mosquitto_pub` as `watering_dev`: a publish to
 `gardenhub/dev/watering/avocado/set` is permitted, while a publish to
