@@ -103,12 +103,14 @@ MQTT authorization is enforced by `configuration/mosquitto/config/acl`:
 - `watering_dev`: write only `gardenhub/dev/watering/avocado/set`, read only
   `gardenhub/dev/watering/avocado`
 - `watering_sim`: read only the dev `/set` topic, write only its state topic
+- `watering_hw_dev`: write only `zigbee2mqtt/avocado-watering/set`, read only
+  `zigbee2mqtt/avocado-watering`
 
 ### Enable the dev watering sandbox
 
 GardenHub development and production use the same Mosquitto broker. Run
 these commands on that shared broker's host, from its lorastack checkout
-(`/opt/iot` below; adjust if installed elsewhere). No separate development
+(`/opt/lorastack` below; adjust if installed elsewhere). No separate development
 broker is required. First ensure this checkout contains the watering ACL
 entries above.
 
@@ -127,7 +129,7 @@ and reloads the broker only after both updates and permission commands succeed.
 ```bash
 (
   set -eu
-  cd /opt/iot
+  cd /opt/lorastack
   test -f configuration/mosquitto/config/passwd
   docker run --rm -it --user 0:0 --entrypoint sh \
     --mount "type=bind,src=$PWD/configuration/mosquitto/config,dst=/cfg" \
@@ -155,19 +157,52 @@ earlier successful password update may already be on disk.
 References: [Mosquitto configuration reload behavior](https://mosquitto.org/man/mosquitto-conf-5.html)
 and [Docker Compose signal option](https://docs.docker.com/reference/cli/docker/compose/kill/).
 
-Use different passwords. Store only the `watering_sim` password in the
-untracked GardenHub root `.env` as `WATERING_SIM_PASSWORD`; use `watering_dev`
-only to publish test commands. Both accounts are exclusively for simulation
-on the shared broker, restricted to the two dev topics above. `symfony`
-stays subscribe-only, and neither new account has any `zigbee2mqtt/#`
-permission. Do not add production Zigbee2MQTT credentials to GardenHub's
-development Compose file.
+Use different passwords. Store the `watering_sim` password in the untracked
+GardenHub root `.env` as `WATERING_SIM_PASSWORD`, and the `watering_dev`
+password as `WATERING_DEV_PASSWORD` for simulator control. Both users remain
+restricted to the dev topics. `symfony` stays subscribe-only; neither
+simulator account has any `zigbee2mqtt/#` permission.
 
 Check the ACL with `mosquitto_pub` as `watering_dev`: a publish to
 `gardenhub/dev/watering/avocado/set` is permitted, while a publish to
 `zigbee2mqtt/avocado/set` must be denied. MQTT QoS 0 can silently drop denied
 publishes, so observe the broker log or subscribe with an authorized account
 when verifying; a successful client exit alone is not proof of permission.
+
+### Enable the real avocado pump for GardenHub development
+
+The optional `watering_hw_dev` account controls only the paired pump named
+`avocado-watering` in Zigbee2MQTT. Keep it separate from `watering_dev` and
+`watering_sim`; no account receives wildcard `zigbee2mqtt/#` access. The ACL
+entry alone does not create a password. On the broker host, add the new user
+to the existing password file, preserve its owner and mode, then reload:
+
+```bash
+(
+  set -eu
+  cd /opt/lorastack
+  test -f configuration/mosquitto/config/passwd
+  docker run --rm -it --user 0:0 --entrypoint sh \
+    --mount "type=bind,src=$PWD/configuration/mosquitto/config,dst=/cfg" \
+    eclipse-mosquitto:2 -ec '
+      test -f /cfg/passwd
+      mosquitto_passwd /cfg/passwd watering_hw_dev
+      chown 1883:1883 /cfg/passwd
+      chmod 0600 /cfg/passwd
+    '
+  docker compose kill --signal SIGHUP mosquitto
+  docker compose logs --since 2m --tail 100 mosquitto
+)
+```
+
+Confirm the broker reloaded the ACL and password file without errors. In
+GardenHub's untracked root `.env`, set `WATERING_MQTT_TOPIC` to
+`zigbee2mqtt/avocado-watering`, `WATERING_DEV_USERNAME` to `watering_hw_dev`,
+and `WATERING_DEV_PASSWORD` to this separate password. Despite the variable
+name, the dedicated hardware account is used only by the opt-in development
+monitor and publisher; production Compose does not run them. Use the
+GardenHub hardware instructions to set calibrated duration and safety limits
+before starting a watering request.
 
 ## 6. Daily operations
 

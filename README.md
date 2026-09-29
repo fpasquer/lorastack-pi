@@ -752,11 +752,12 @@ Mosquitto is the central MQTT broker.
 | `symfony`       | read-only `application/#`                                |
 | `watering_dev`  | write dev watering `/set`, read dev watering state       |
 | `watering_sim`  | read dev watering `/set`, write dev watering state       |
+| `watering_hw_dev` | write avocado pump `/set`, read avocado pump state     |
 
-The two watering users are optional development accounts. Their exact topic
-ACLs are in `configuration/mosquitto/config/acl`; they cannot reach the
-production `zigbee2mqtt/#` namespace. See `docs/OPERATIONS.md` for the
-interactive password creation steps before starting GardenHub's simulator.
+These optional watering users have exact topic ACLs in
+`configuration/mosquitto/config/acl`. The simulator users cannot access
+`zigbee2mqtt/#`; the hardware user can access only the single avocado pump.
+See `docs/OPERATIONS.md` for the interactive password creation steps.
 
 ## Topic structure
 

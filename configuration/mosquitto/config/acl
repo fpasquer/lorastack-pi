@@ -34,3 +34,9 @@ topic read gardenhub/dev/watering/avocado
 user watering_sim
 topic read gardenhub/dev/watering/avocado/set
 topic write gardenhub/dev/watering/avocado
+
+# Opt-in GardenHub development control of the single real avocado pump.
+# Separate credentials from the simulator, with no wildcard access.
+user watering_hw_dev
+topic write zigbee2mqtt/avocado-watering/set
+topic read zigbee2mqtt/avocado-watering
